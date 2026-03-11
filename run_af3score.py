@@ -367,6 +367,13 @@ class ResultsForSeed:
 # Define a global CCD variable at the module level
 global_ccd = None
 
+
+def preserve_case_safe_name(name: str) -> str:
+  """Sanitize names for filesystem paths while preserving original letter case."""
+  safe = ''.join(ch if ch.isalnum() or ch in {'-', '_', '.'} else '_' for ch in name)
+  return safe.strip('._') or 'unnamed'
+
+
 def predict_structure(
     fold_input: folding_input.Input,
     model_runner: ModelRunner,
@@ -419,7 +426,7 @@ def write_fold_input_json(
   """Writes the input JSON to the output directory."""
   os.makedirs(output_dir, exist_ok=True)
   with open(
-      os.path.join(output_dir, f'{fold_input.sanitised_name()}_data.json'), 'wt'
+      os.path.join(output_dir, f'{preserve_case_safe_name(fold_input.name)}_data.json'), 'wt'
   ) as f:
     f.write(fold_input.to_json())
 
@@ -616,7 +623,7 @@ def process_fold_input(
     write_outputs(
         all_inference_results=all_inference_results,
         output_dir=output_dir,
-        job_name=fold_input.sanitised_name(),
+        job_name=preserve_case_safe_name(fold_input.name),
     )
     output = all_inference_results
 
@@ -790,7 +797,7 @@ def main(_):
         
         # Process each fold input - now using compiled model
         for fold_input in fold_inputs:
-            output_subdir = os.path.join(_OUTPUT_DIR.value, fold_input.sanitised_name())
+            output_subdir = os.path.join(_OUTPUT_DIR.value, preserve_case_safe_name(fold_input.name))
             process_fold_input(
                 fold_input=fold_input,
                 data_pipeline_config=data_pipeline_config,
@@ -824,7 +831,7 @@ def main(_):
           fold_input=fold_input,
           data_pipeline_config=data_pipeline_config,
           model_runner=model_runner,
-          output_dir=os.path.join(_OUTPUT_DIR.value, fold_input.sanitised_name()),
+          output_dir=os.path.join(_OUTPUT_DIR.value, preserve_case_safe_name(fold_input.name)),
           buckets=tuple(int(bucket) for bucket in _BUCKETS.value),
           init_guess=_INIT_GUESS.value,
           path=_INIT_PATH.value,
