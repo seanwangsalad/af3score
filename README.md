@@ -27,66 +27,103 @@ The pipeline is split into explicit Python steps with `argparse` CLIs.
 
 ### Step 1: extract chains + sequences
 ```bash
-python 1_extract_chains.py
+python 1_extract_chains.py \
+  --input_dir ./pdb \
+  --output_dir_cif ./complex_chain_cifs \
+  --save_csv ./complex_chain_sequences.csv
 ```
-Input:
-- `./pdb/*.pdb`
-
-Output:
-- `./complex_chain_cifs/*.cif`
-- `./complex_chain_sequences.csv`
 
 ### Step 2: convert PDB to JAX/H5 inputs
 ```bash
-python 2_pdb2jax.py
+python 2_pdb2jax.py \
+  --pdb_dir ./pdb \
+  --output_dir ./complex_h5
 ```
 Input:
 - `./pdb/*.pdb`
 
-Output:
-- `./complex_h5/*.h5`
-
 ### Step 3: generate AF3 JSON configs
 ```bash
-python 3_generate_json.py
+python 3_generate_json.py \
+  --sequence_csv ./complex_chain_sequences.csv \
+  --cif_dir ./complex_chain_cifs \
+  --output_dir ./complex_json_files
 ```
-Input:
-- `./complex_chain_sequences.csv`
-
-Output:
-- `./complex_json_files/*.json`
 
 ### Step 4: run AF3Score inference
 ```bash
 python run_af3score.py \
   --model_dir=/path/to/alphafold3_model_parameters \
-  --db_dir=/path/to/databases \
   --batch_json_dir=./complex_json_files \
   --batch_h5_dir=./complex_h5 \
   --output_dir=./af3score_outputs \
   --run_data_pipeline=False \
   --run_inference=true
 ```
+Input:
+- `./pdb/*.pdb`
 
-### Optional: run all steps in one Python command
+## One-command Python orchestration
+
 ```bash
 python af3score_pipeline.py \
   --input_pdb_dir ./pdb \
   --output_dir ./run_001 \
-  --model_dir /path/to/alphafold3_model_parameters \
-  --db_dir /path/to/databases
+  --model_dir /path/to/alphafold3_model_parameters
 ```
 
-### Optional: run multiple datasets
+### Full path control (no hardcoded internal paths)
+
+All generated output locations and called script paths are configurable from CLI:
+
+```bash
+python af3score_pipeline.py \
+  --input_pdb_dir /data/my_pdbs \
+  --output_dir /runs/exp_001 \
+  --cif_dir /runs/exp_001/custom_cifs \
+  --sequence_csv /runs/exp_001/custom_sequences.csv \
+  --h5_dir /runs/exp_001/custom_h5 \
+  --json_dir /runs/exp_001/custom_json \
+  --af3_output_dir /runs/exp_001/custom_af3 \
+  --metric_csv /runs/exp_001/custom_metrics.csv \
+  --extract_script /opt/pipeline/1_extract_chains.py \
+  --pdb2jax_script /opt/pipeline/2_pdb2jax.py \
+  --json_script /opt/pipeline/3_generate_json.py \
+  --af3score_script /opt/pipeline/run_af3score.py \
+  --metrics_script /opt/pipeline/04_get_metrics.py \
+  --model_dir /models/af3
+```
+
+## Multiple datasets
+
 ```bash
 python af3score_multidir.py \
   --input_dirs ./set_a ./set_b \
   --output_parent_dir ./multi_runs \
-  --model_dir /path/to/alphafold3_model_parameters \
-  --db_dir /path/to/databases
+  --pipeline_script ./af3score_pipeline.py \
+  --model_dir /path/to/alphafold3_model_parameters
+```
+Input:
+- `./complex_chain_sequences.csv`
+
+
+### Do I need `--db_dir`?
+
+No, it is optional. If omitted, `run_af3score.py` uses its internal default DB search path.
+
+Provide `--db_dir` only when you want to override where AF3 looks for databases:
+
+```bash
+--db_dir /path/to/databases
 ```
 
-In that mode, `--db_dir` is not required.
+You can still disable MSA/database search entirely with:
+
+```bash
+--run_data_pipeline=false
+```
+
+## Output Metrics
 
 - **pTM**: global/per-chain topology confidence.
 - **ipTM**: interface confidence between chains.
