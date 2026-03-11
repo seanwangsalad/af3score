@@ -53,7 +53,7 @@ python 3_generate_json.py \
 ### Step 4: run AF3Score inference
 ```bash
 python run_af3score.py \
-  --model_dir=/path/to/alphafold3_model_parameters \
+  --model_dir=/absolute/path/to/alphafold3_model_parameters \
   --batch_json_dir=./complex_json_files \
   --batch_h5_dir=./complex_h5 \
   --output_dir=./af3score_outputs \
@@ -65,11 +65,14 @@ Input:
 
 ## One-command Python orchestration
 
+> Note: the pipeline wrapper flag is `--weights` (it forwards to `run_af3score.py --model_dir`).
+
+
 ```bash
 python af3score_pipeline.py \
-  --input_pdb_dir ./pdb \
+  --input ./pdb \
   --output_dir ./run_001 \
-  --model_dir /path/to/alphafold3_model_parameters
+  --weights /absolute/path/to/alphafold3_model_parameters
 ```
 
 ### Full path control (no hardcoded internal paths)
@@ -78,7 +81,7 @@ All generated output locations and called script paths are configurable from CLI
 
 ```bash
 python af3score_pipeline.py \
-  --input_pdb_dir /data/my_pdbs \
+  --input /data/my_pdbs \
   --output_dir /runs/exp_001 \
   --cif_dir /runs/exp_001/custom_cifs \
   --sequence_csv /runs/exp_001/custom_sequences.csv \
@@ -91,7 +94,7 @@ python af3score_pipeline.py \
   --json_script /opt/pipeline/3_generate_json.py \
   --af3score_script /opt/pipeline/run_af3score.py \
   --metrics_script /opt/pipeline/04_get_metrics.py \
-  --model_dir /models/af3
+  --weights /models/af3
 ```
 
 ## Multiple datasets
@@ -101,7 +104,7 @@ python af3score_multidir.py \
   --input_dirs ./set_a ./set_b \
   --output_parent_dir ./multi_runs \
   --pipeline_script ./af3score_pipeline.py \
-  --model_dir /path/to/alphafold3_model_parameters
+  --weights /absolute/path/to/alphafold3_model_parameters
 ```
 Input:
 - `./complex_chain_sequences.csv`
