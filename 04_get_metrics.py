@@ -343,15 +343,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--input_pdb_dir",
-        default="/lustre/grp/cmclab/wanghz/Project/sabdab_af3score/clean_pdb",
+        default="./pdb",
     )
     parser.add_argument(
         "--af3score_output_dir",
-        default="/lustre/grp/cmclab/wanghz/Project/sabdab_af3score/af3score_output/af3score_outputs",
+        default="./af3score_outputs",
     )
     parser.add_argument(
         "--save_metric_csv",
-        default="/lustre/grp/cmclab/wanghz/Project/sabdab_af3score/af3score_output/af3score_metrics.csv",
+        default="./af3score_metrics.csv",
     )
     parser.add_argument("--num_workers", type=int, default=16)
     args = parser.parse_args()
