@@ -23,7 +23,7 @@ def main() -> None:
     parser.add_argument("--input", required=True, help="Directory containing input PDB files.")
     parser.add_argument("--output_dir", required=True, help="Base output directory.")
     parser.add_argument("--python_exec", default=sys.executable, help="Python executable for subprocess calls.")
-    parser.add_argument("--weights", default=None, help="Absolute path to AlphaFold3 model weights directory.")
+    parser.add_argument("--weights", default=None, help="Absolute path to AlphaFold3 model weights file.")
     parser.add_argument("--db_dir", action="append", default=None, help="AlphaFold3 database directory. Repeatable.")
     parser.add_argument("--num_workers", type=int, default=4, help="Worker count for preprocessing scripts.")
     parser.add_argument("--run_data_pipeline", type=str2bool, default=False)
@@ -48,6 +48,11 @@ def main() -> None:
 
     if args.run_inference and not args.weights:
         parser.error("--weights is required when --run_inference is true.")
+
+    weights_path = Path(args.weights).expanduser().resolve() if args.weights else None
+    if args.run_inference and (not weights_path or not weights_path.is_file()):
+        parser.error("--weights must point to an existing weight file.")
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -94,8 +99,8 @@ def main() -> None:
         *passthrough,
     ]
 
-    if args.weights:
-        af3_cmd.append(f"--model_dir={args.weights}")
+    if weights_path:
+        af3_cmd.append(f"--model_dir={weights_path.parent}")
     for db_dir in args.db_dir or []:
         af3_cmd.append(f"--db_dir={db_dir}")
 

@@ -65,14 +65,14 @@ Input:
 
 ## One-command Python orchestration
 
-> Note: the pipeline wrapper flag is `--weights` (it forwards to `run_af3score.py --model_dir`).
+> Note: the pipeline wrapper flag is `--weights` and expects a single weight file path; it forwards that file's parent directory to `run_af3score.py --model_dir`.
 
 
 ```bash
 python af3score_pipeline.py \
   --input ./pdb \
   --output_dir ./run_001 \
-  --weights /absolute/path/to/alphafold3_model_parameters
+  --weights /absolute/path/to/alphafold3_model_parameters/weights.bin
 ```
 
 ### Full path control (no hardcoded internal paths)
@@ -94,7 +94,7 @@ python af3score_pipeline.py \
   --json_script /opt/pipeline/3_generate_json.py \
   --af3score_script /opt/pipeline/run_af3score.py \
   --metrics_script /opt/pipeline/04_get_metrics.py \
-  --weights /models/af3
+  --weights /models/af3/weights.bin
 ```
 Input:
 - `./complex_chain_sequences.csv`
