@@ -86,7 +86,7 @@ python af3score_multidir.py \
   --db_dir /path/to/databases
 ```
 
-## Output Metrics
+In that mode, `--db_dir` is not required.
 
 - **pTM**: global/per-chain topology confidence.
 - **ipTM**: interface confidence between chains.
