@@ -96,19 +96,8 @@ python af3score_pipeline.py \
   --metrics_script /opt/pipeline/04_get_metrics.py \
   --weights /models/af3
 ```
-
-## Multiple datasets
-
-```bash
-python af3score_multidir.py \
-  --input_dirs ./set_a ./set_b \
-  --output_parent_dir ./multi_runs \
-  --pipeline_script ./af3score_pipeline.py \
-  --weights /absolute/path/to/alphafold3_model_parameters
-```
 Input:
 - `./complex_chain_sequences.csv`
-
 
 ### Do I need `--db_dir`?
 
