@@ -27,26 +27,34 @@ The pipeline is split into explicit Python steps with `argparse` CLIs.
 
 ### Step 1: extract chains + sequences
 ```bash
-python 1_extract_chains.py \
-  --input_dir ./pdb \
-  --output_dir_cif ./complex_chain_cifs \
-  --save_csv ./complex_chain_sequences.csv
+python 1_extract_chains.py
 ```
+Input:
+- `./pdb/*.pdb`
+
+Output:
+- `./complex_chain_cifs/*.cif`
+- `./complex_chain_sequences.csv`
 
 ### Step 2: convert PDB to JAX/H5 inputs
 ```bash
-python 2_pdb2jax.py \
-  --pdb_dir ./pdb \
-  --output_dir ./complex_h5
+python 2_pdb2jax.py
 ```
+Input:
+- `./pdb/*.pdb`
+
+Output:
+- `./complex_h5/*.h5`
 
 ### Step 3: generate AF3 JSON configs
 ```bash
-python 3_generate_json.py \
-  --sequence_csv ./complex_chain_sequences.csv \
-  --cif_dir ./complex_chain_cifs \
-  --output_dir ./complex_json_files
+python 3_generate_json.py
 ```
+Input:
+- `./complex_chain_sequences.csv`
+
+Output:
+- `./complex_json_files/*.json`
 
 ### Step 4: run AF3Score inference
 ```bash
@@ -60,8 +68,7 @@ python run_af3score.py \
   --run_inference=true
 ```
 
-## One-command Python orchestration
-
+### Optional: run all steps in one Python command
 ```bash
 python af3score_pipeline.py \
   --input_pdb_dir ./pdb \
@@ -70,36 +77,11 @@ python af3score_pipeline.py \
   --db_dir /path/to/databases
 ```
 
-### Full path control (no hardcoded internal paths)
-
-All generated output locations and called script paths are configurable from CLI:
-
-```bash
-python af3score_pipeline.py \
-  --input_pdb_dir /data/my_pdbs \
-  --output_dir /runs/exp_001 \
-  --cif_dir /runs/exp_001/custom_cifs \
-  --sequence_csv /runs/exp_001/custom_sequences.csv \
-  --h5_dir /runs/exp_001/custom_h5 \
-  --json_dir /runs/exp_001/custom_json \
-  --af3_output_dir /runs/exp_001/custom_af3 \
-  --metric_csv /runs/exp_001/custom_metrics.csv \
-  --extract_script /opt/pipeline/1_extract_chains.py \
-  --pdb2jax_script /opt/pipeline/2_pdb2jax.py \
-  --json_script /opt/pipeline/3_generate_json.py \
-  --af3score_script /opt/pipeline/run_af3score.py \
-  --metrics_script /opt/pipeline/04_get_metrics.py \
-  --model_dir /models/af3 \
-  --db_dir /db/af3
-```
-
-## Multiple datasets
-
+### Optional: run multiple datasets
 ```bash
 python af3score_multidir.py \
   --input_dirs ./set_a ./set_b \
   --output_parent_dir ./multi_runs \
-  --pipeline_script ./af3score_pipeline.py \
   --model_dir /path/to/alphafold3_model_parameters \
   --db_dir /path/to/databases
 ```
