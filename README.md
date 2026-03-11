@@ -39,6 +39,8 @@ python 2_pdb2jax.py \
   --pdb_dir ./pdb \
   --output_dir ./complex_h5
 ```
+Input:
+- `./pdb/*.pdb`
 
 ### Step 3: generate AF3 JSON configs
 ```bash
@@ -58,6 +60,8 @@ python run_af3score.py \
   --run_data_pipeline=False \
   --run_inference=true
 ```
+Input:
+- `./pdb/*.pdb`
 
 ## One-command Python orchestration
 
@@ -99,6 +103,8 @@ python af3score_multidir.py \
   --pipeline_script ./af3score_pipeline.py \
   --model_dir /path/to/alphafold3_model_parameters
 ```
+Input:
+- `./complex_chain_sequences.csv`
 
 
 ### Do I need `--db_dir`?
