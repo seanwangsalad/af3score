@@ -9,7 +9,7 @@ def main() -> None:
     parser.add_argument("--input_dirs", nargs="+", required=True)
     parser.add_argument("--output_parent_dir", required=True)
     parser.add_argument("--pipeline_script", default="af3score_pipeline.py", help="Path to pipeline runner script.")
-    parser.add_argument("--model_dir", default=None)
+    parser.add_argument("--weights", default=None, help="Absolute path to AlphaFold3 model weights directory.")
     parser.add_argument("--db_dir", action="append", default=None, help="Repeatable database directory argument.")
     parser.add_argument("--python_exec", default=sys.executable)
     parser.add_argument("--num_workers", type=int, default=4)
@@ -24,13 +24,13 @@ def main() -> None:
         cmd = [
             args.python_exec,
             args.pipeline_script,
-            "--input_pdb_dir", input_dir,
+            "--input", input_dir,
             "--output_dir", str(out_dir),
             "--num_workers", str(args.num_workers),
             *passthrough,
         ]
-        if args.model_dir:
-            cmd.extend(["--model_dir", args.model_dir])
+        if args.weights:
+            cmd.extend(["--weights", args.weights])
         for db_dir in args.db_dir or []:
             cmd.extend(["--db_dir", db_dir])
         print("▶", " ".join(cmd))

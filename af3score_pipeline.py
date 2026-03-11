@@ -20,10 +20,10 @@ def run_cmd(cmd):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Python-only AF3Score pipeline runner.")
-    parser.add_argument("--input_pdb_dir", required=True, help="Directory containing input PDB files.")
+    parser.add_argument("--input", required=True, help="Directory containing input PDB files.")
     parser.add_argument("--output_dir", required=True, help="Base output directory.")
     parser.add_argument("--python_exec", default=sys.executable, help="Python executable for subprocess calls.")
-    parser.add_argument("--model_dir", default=None, help="AlphaFold3 model directory.")
+    parser.add_argument("--weights", default=None, help="Absolute path to AlphaFold3 model weights directory.")
     parser.add_argument("--db_dir", action="append", default=None, help="AlphaFold3 database directory. Repeatable.")
     parser.add_argument("--num_workers", type=int, default=4, help="Worker count for preprocessing scripts.")
     parser.add_argument("--run_data_pipeline", type=str2bool, default=False)
@@ -46,8 +46,8 @@ def main() -> None:
 
     args, passthrough = parser.parse_known_args()
 
-    if args.run_inference and not args.model_dir:
-        parser.error("--model_dir is required when --run_inference is true.")
+    if args.run_inference and not args.weights:
+        parser.error("--weights is required when --run_inference is true.")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,7 +61,7 @@ def main() -> None:
     run_cmd([
         args.python_exec,
         args.extract_script,
-        "--input_dir", args.input_pdb_dir,
+        "--input_dir", args.input,
         "--output_dir_cif", str(cif_dir),
         "--save_csv", str(seq_csv),
         "--num_workers", str(args.num_workers),
@@ -70,7 +70,7 @@ def main() -> None:
     run_cmd([
         args.python_exec,
         args.pdb2jax_script,
-        "--pdb_dir", args.input_pdb_dir,
+        "--pdb_dir", args.input,
         "--output_dir", str(h5_dir),
         "--num_workers", str(args.num_workers),
     ])
@@ -94,8 +94,8 @@ def main() -> None:
         *passthrough,
     ]
 
-    if args.model_dir:
-        af3_cmd.append(f"--model_dir={args.model_dir}")
+    if args.weights:
+        af3_cmd.append(f"--model_dir={args.weights}")
     for db_dir in args.db_dir or []:
         af3_cmd.append(f"--db_dir={db_dir}")
 
@@ -104,7 +104,7 @@ def main() -> None:
     run_cmd([
         args.python_exec,
         args.metrics_script,
-        "--input_pdb_dir", args.input_pdb_dir,
+        "--input_pdb_dir", args.input,
         "--af3score_output_dir", str(af3_output_dir),
         "--save_metric_csv", str(metric_csv),
     ])
