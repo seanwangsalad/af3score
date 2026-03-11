@@ -1,107 +1,131 @@
 # AF3Score Pipeline
 
-A pipeline for evaluating protein structure quality using AF3Score.
+A Python-first pipeline for evaluating protein structure quality with AF3Score.
 
 ## Environment Setup
 
-### 1. Create and Activate Conda Environment
+### 1. Create and activate a Conda environment
 ```bash
 conda create -n af3score python=3.11
 conda activate af3score
 conda install gxx_linux-64 gxx_impl_linux-64 gcc_linux-64 gcc_impl_linux-64=13.2.0
 ```
 
-
-### 2. Install AF3Score and Dependencies
+### 2. Install AF3Score and dependencies
 ```bash
 git clone https://github.com/Mingchenchen/AF3Score.git
-cd AF3Score/
-
-# Install Python dependencies
+cd AF3Score
 pip install -r dev-requirements.txt
 pip install --no-deps -e .
 build_data
-
-# Install additional dependencies
 conda install -c conda-forge biopython h5py pandas
 ```
 
+## Python CLI workflow (no bash wrappers)
 
-### 3. (Optional) MSA Generation Setup
-Download Databases:
+The pipeline is split into explicit Python steps with `argparse` CLIs.
+
+### Step 1: extract chains + sequences
 ```bash
-bash fetch_databases.sh <DB_DIR>  # Replace <DB_DIR> with your database directory
+python 1_extract_chains.py \
+  --input_dir ./pdb \
+  --output_dir_cif ./complex_chain_cifs \
+  --save_csv ./complex_chain_sequences.csv
 ```
 
-Install HMMER:
+### Step 2: convert PDB to JAX/H5 inputs
 ```bash
-mkdir ~/hmmer_build ~/hmmer
-wget http://eddylab.org/software/hmmer/hmmer-3.4.tar.gz -P ~/hmmer_build
-cd ~/hmmer_build
-tar -zxf hmmer-3.4.tar.gz
-cd hmmer-3.4
-./configure --prefix=~/hmmer
-make -j8
-make install
+python 2_pdb2jax.py \
+  --pdb_dir ./pdb \
+  --output_dir ./complex_h5
 ```
 
-Add HMMER to your PATH:
+### Step 3: generate AF3 JSON configs
 ```bash
-export PATH="~/hmmer/bin:$PATH"
+python 3_generate_json.py \
+  --sequence_csv ./complex_chain_sequences.csv \
+  --cif_dir ./complex_chain_cifs \
+  --output_dir ./complex_json_files
 ```
 
-Verify installation:
+### Step 4: run AF3Score inference
 ```bash
-hmmsearch -h
+python run_af3score.py \
+  --model_dir=/path/to/alphafold3_model_parameters \
+  --batch_json_dir=./complex_json_files \
+  --batch_h5_dir=./complex_h5 \
+  --output_dir=./af3score_outputs \
+  --run_data_pipeline=False \
+  --run_inference=true
 ```
 
-## Usage Pipeline
+## One-command Python orchestration
 
-The **AF3Score pipeline** is designed for high-throughput evaluation of protein structures. It consists of two primary scripts tailored for single-batch or multi-batch processing on high-performance computing (HPC) clusters.
-
-### 1. Main Pipeline Script
-
-`AF3score_pipeline.sh` is the core utility used to process a single directory of PDB files.
-
-**Usage:**
-
-Before running the pipeline on a shell cluster, you must configure the variables within `AF3score_pipeline.sh`.
-
-| Variable | Description | Example Value |
-| --- | --- | --- |
-| `PYTHON_EXEC` | Path to the specific Conda environment Python binary. | `~/anaconda3/envs/af3score/bin/python` |
-| `slurm_partition` | Target GPU partitions for job submission. | `gpu1,gpu2` |
-| `slurm_nodelist` | Specific nodes assigned for the computation. | `c06b14n[05-06],c06b19n[05-06]` |
-
-Run the pipeline:
 ```bash
-./AF3score_pipeline.sh <input_pdb_dir> <output_dir> <num_jobs>
-
+python af3score_pipeline.py \
+  --input_pdb_dir ./pdb \
+  --output_dir ./run_001 \
+  --model_dir /path/to/alphafold3_model_parameters
 ```
 
-* **`<input_pdb_dir>`**: Path to the directory containing your input `.pdb` files.
-* **`<output_dir>`**: Target directory where AF3Score metrics and results will be saved.
-* **`<num_jobs>`**: The number of parallel jobs to launch.
+### Full path control (no hardcoded internal paths)
 
-### 2. Batch Processing
+All generated output locations and called script paths are configurable from CLI:
 
-For users handling multiple datasets across several directories, use the multi-directory wrapper `AF3score_mutildir.sh`.
+```bash
+python af3score_pipeline.py \
+  --input_pdb_dir /data/my_pdbs \
+  --output_dir /runs/exp_001 \
+  --cif_dir /runs/exp_001/custom_cifs \
+  --sequence_csv /runs/exp_001/custom_sequences.csv \
+  --h5_dir /runs/exp_001/custom_h5 \
+  --json_dir /runs/exp_001/custom_json \
+  --af3_output_dir /runs/exp_001/custom_af3 \
+  --metric_csv /runs/exp_001/custom_metrics.csv \
+  --extract_script /opt/pipeline/1_extract_chains.py \
+  --pdb2jax_script /opt/pipeline/2_pdb2jax.py \
+  --json_script /opt/pipeline/3_generate_json.py \
+  --af3score_script /opt/pipeline/run_af3score.py \
+  --metrics_script /opt/pipeline/04_get_metrics.py \
+  --model_dir /models/af3
+```
 
+## Multiple datasets
+
+```bash
+python af3score_multidir.py \
+  --input_dirs ./set_a ./set_b \
+  --output_parent_dir ./multi_runs \
+  --pipeline_script ./af3score_pipeline.py \
+  --model_dir /path/to/alphafold3_model_parameters
+```
+
+
+### Do I need `--db_dir`?
+
+No, it is optional. If omitted, `run_af3score.py` uses its internal default DB search path.
+
+Provide `--db_dir` only when you want to override where AF3 looks for databases:
+
+```bash
+--db_dir /path/to/databases
+```
+
+You can still disable MSA/database search entirely with:
+
+```bash
+--run_data_pipeline=false
+```
 
 ## Output Metrics
 
-The pipeline generates the following scoring metrics:
-
-| Metric | Level | Description |
-| --- | --- | --- |
-| **pTM** | Global / Per-chain | **Predicted TM-score:** Measures the overall topological accuracy of the global structure. |
-| **ipTM** | Global / Inter-chain | **Interface pTM:** Assesses the accuracy of the interfaces between different protein chains. |
-| **pLDDT** | Per-residue / Per-chain | **Predicted Local Distance Difference Test:** A per-residue confidence score (0-100). Higher values indicate higher local structure stability. |
-| **PAE** | Per-chain | **Predicted Aligned Error:** The expected distance error (in Å) between pairs of residues. Lower values indicate higher confidence in relative positioning. |
-| **ipSAE** | Inter-chain | **interaction prediction Score from Aligned Errors:** Specifically focuses on the binding interface of two chains. |
-
-Global level metrics are evaluates the quality of the overall structure. Per-chain metrics are focused on the quality of individual chains. Inter-chain metrics are designed to assess the quality of the docking between two chains.
+- **pTM**: global/per-chain topology confidence.
+- **ipTM**: interface confidence between chains.
+- **pLDDT**: per-residue confidence.
+- **PAE**: expected aligned error.
+- **ipSAE**: interface-focused score from aligned errors.
 
 ## Reference
 
-For more information about AlphaFold3, please visit their [GitHub Repository](https://github.com/google-deepmind/alphafold3)
+For AlphaFold3 details, see the official repository:
+https://github.com/google-deepmind/alphafold3
