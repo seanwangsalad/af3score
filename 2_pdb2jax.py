@@ -422,15 +422,15 @@ def main():
     """Main execution entry point."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--pdb_folder",
+        "--pdb_dir",
         type=str,
-        required=True,
+        default='./pdb',
         help="Input directory containing PDB files",
     )
     parser.add_argument(
-        "--output_folder",
+        "--output_dir",
         type=str,
-        required=True,
+        default='./complex_h5',
         help="Output directory for H5 files",
     )
     parser.add_argument(
@@ -441,7 +441,7 @@ def main():
     )
     args = parser.parse_args()
 
-    pdb_folder = args.pdb_folder
+    pdb_folder = args.pdb_dir
     # Extract bucket size from the folder name suffix (e.g., folder_name_512)
     try:
         bucket = int(os.path.basename(pdb_folder).split("_")[-1])
@@ -455,7 +455,7 @@ def main():
     BUCKETS = [bucket]
     print(f"🎯 Detected bucket value from folder name: {bucket}")
 
-    output_folder = args.output_folder
+    output_folder = args.output_dir
     os.makedirs(output_folder, exist_ok=True)
     num_workers = args.num_workers
 
