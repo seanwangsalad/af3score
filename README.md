@@ -25,6 +25,23 @@ conda install -c conda-forge biopython h5py pandas
 
 The pipeline is split into explicit Python steps with `argparse` CLIs.
 
+## Minimal repository layout
+
+This repository is pruned to the smallest usable Python workflow around AF3Score:
+
+- `1_extract_chains.py`
+- `2_pdb2jax.py`
+- `3_generate_json.py`
+- `af3score_pipeline.py`
+- `run_af3score.py`
+- `04_get_metrics.py`
+- `ipsae_calculator.py`
+- `model_manager_correct.py`
+
+## Python CLI workflow (no bash wrappers)
+
+The pipeline is split into explicit Python steps with `argparse` CLIs.
+
 ### Step 1: extract chains + sequences
 ```bash
 python 1_extract_chains.py \
