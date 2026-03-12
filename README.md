@@ -21,6 +21,9 @@ build_data
 conda install -c conda-forge biopython h5py pandas
 ```
 
+## Python CLI workflow (no bash wrappers)
+
+The pipeline is split into explicit Python steps with `argparse` CLIs.
 
 ## Minimal repository layout
 
@@ -53,6 +56,8 @@ python 2_pdb2jax.py \
   --pdb_dir ./pdb \
   --output_dir ./complex_h5
 ```
+Input:
+- `./pdb/*.pdb`
 
 ### Step 3: generate AF3 JSON configs
 ```bash
@@ -72,6 +77,8 @@ python run_af3score.py \
   --run_data_pipeline=False \
   --run_inference=true
 ```
+Input:
+- `./pdb/*.pdb`
 
 ## One-command Python orchestration
 
@@ -106,6 +113,8 @@ python af3score_pipeline.py \
   --metrics_script /opt/pipeline/04_get_metrics.py \
   --weights /models/af3/weights.bin
 ```
+Input:
+- `./complex_chain_sequences.csv`
 
 ### Do I need `--db_dir`?
 
