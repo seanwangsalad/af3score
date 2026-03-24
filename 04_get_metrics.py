@@ -11,7 +11,7 @@ from tqdm import tqdm
 import glob
 
 # Ensure these utilities are available in your environment
-from ipsae_calculator import load_af3_pae_and_chains, calculate_ipsae
+from ipsae_calculator import load_af3_pae_and_chains, calculate_ipsae, calculate_pdockq
 
 
 def get_chains_from_pdb(pdb_path):
@@ -238,9 +238,20 @@ def process_single_description(args):
         for k, v in ipsae_dict.items():
             ipsae_metrics[f"ipsae_{k}"] = v
 
+        # Calculate pDOCKQ (requires atom_plddts from confidences.json)
+        # Load conf early so we can reuse it below without re-reading.
+        conf = json.loads(conf_path.read_text())
+        pdockq_metrics = {}
+        pdockq_dict = calculate_pdockq(
+            pdb_path,
+            conf["atom_plddts"],
+            conf["atom_chain_ids"],
+        )
+        for k, v in pdockq_dict.items():
+            pdockq_metrics[f"pdockq_{k}"] = v
+
         # Load AlphaFold3 confidence data
         summary = json.loads(summary_path.read_text())
-        conf = json.loads(conf_path.read_text())
         chains = get_chains_from_pdb(pdb_path)
 
         # Map chain-level ipTM and PTM scores
@@ -294,6 +305,9 @@ def process_single_description(args):
             result[f"chain_{ch}_iptm"] = iptm.get(ch, np.nan)
 
         result.update(ipsae_metrics)
+        result["min_ipsae"] = min(ipsae_metrics.values()) if ipsae_metrics else np.nan
+        result.update(pdockq_metrics)
+        result["min_pdockq"] = min(pdockq_metrics.values()) if pdockq_metrics else np.nan
         result.update(interchain_iptm_dict)
 
         return result, None
