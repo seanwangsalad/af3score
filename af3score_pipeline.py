@@ -28,6 +28,15 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=4, help="Worker count for preprocessing scripts.")
     parser.add_argument("--run_data_pipeline", type=str2bool, default=False)
     parser.add_argument("--run_inference", type=str2bool, default=True)
+    parser.add_argument(
+        "--csv",
+        type=str2bool,
+        default=False,
+        help=(
+            "If true, skip preprocessing and inference and generate only the final "
+            "metrics CSV from existing AF3 outputs."
+        ),
+    )
 
     # Script paths are configurable (no hardcoded absolute paths).
     parser.add_argument("--extract_script", default="1_extract_chains.py")
@@ -62,6 +71,21 @@ def main() -> None:
     json_dir = Path(args.json_dir) if args.json_dir else output_dir / "complex_json_files"
     af3_output_dir = Path(args.af3_output_dir) if args.af3_output_dir else output_dir / "af3score_outputs"
     metric_csv = Path(args.metric_csv) if args.metric_csv else output_dir / "af3score_metrics.csv"
+
+    if args.csv:
+        if not af3_output_dir.exists():
+            parser.error(
+                f"--csv requires an existing AF3 output directory, but {af3_output_dir} was not found."
+            )
+
+        run_cmd([
+            args.python_exec,
+            args.metrics_script,
+            "--input_pdb_dir", args.input,
+            "--af3score_output_dir", str(af3_output_dir),
+            "--save_metric_csv", str(metric_csv),
+        ])
+        return
 
     run_cmd([
         args.python_exec,

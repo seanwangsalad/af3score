@@ -3,6 +3,7 @@ import numpy as np
 from itertools import combinations
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Set
+from Bio.PDB import MMCIFParser, PDBParser
 
 # --- Constants Definition ---
 # Standard amino acid set (3-letter codes)
@@ -267,34 +268,44 @@ def calculate_ipsae(
     return scores
 
 
-def _parse_pdb_atoms_with_coords(
-    pdb_path: Union[str, Path],
+def _parse_structure_atoms_with_coords(
+    structure_path: Union[str, Path],
 ) -> List[Dict]:
-    """Parse ATOM/HETATM lines, returning per-atom dicts that include x/y/z."""
+    """Parse atoms from a PDB or mmCIF structure in file order."""
+    structure_path = Path(structure_path)
+    if structure_path.suffix.lower() == ".cif":
+        parser = MMCIFParser(QUIET=True)
+    else:
+        parser = PDBParser(QUIET=True)
+
+    structure = parser.get_structure("structure", str(structure_path))
+    model = structure[0]
     atoms = []
-    with open(pdb_path, "r") as f:
-        for line in f:
-            if not (line.startswith("ATOM") or line.startswith("HETATM")):
-                continue
-            if len(line) < 54:
-                continue
-            try:
-                atoms.append({
-                    "atom_name":      line[12:16].strip(),
-                    "residue_name":   line[17:20].strip(),
-                    "chain_id":       line[21].strip(),
-                    "residue_seq_num": int(line[22:26]),
-                    "x": float(line[30:38]),
-                    "y": float(line[38:46]),
-                    "z": float(line[46:54]),
-                })
-            except ValueError:
-                continue
+
+    for chain in model:
+        for residue in chain:
+            _, residue_seq_num, _ = residue.id
+            for atom in residue:
+                if atom.is_disordered():
+                    altloc = atom.get_altloc()
+                    if altloc not in (" ", "A"):
+                        continue
+                atoms.append(
+                    {
+                        "atom_name": atom.get_name().strip(),
+                        "residue_name": residue.get_resname().strip(),
+                        "chain_id": chain.id.strip(),
+                        "residue_seq_num": int(residue_seq_num),
+                        "x": float(atom.coord[0]),
+                        "y": float(atom.coord[1]),
+                        "z": float(atom.coord[2]),
+                    }
+                )
     return atoms
 
 
 def calculate_pdockq(
-    pdb_path: Union[str, Path],
+    structure_path: Union[str, Path],
     atom_plddts: List[float],
     atom_chain_ids: List[str],
     dist_cutoff: float = 8.0,
@@ -307,16 +318,16 @@ def calculate_pdockq(
 
     Interface contacts use Cβ atoms (CA for Gly/ligands) within dist_cutoff Å.
     Per-residue pLDDT is the mean over all atoms belonging to that residue.
-    atom_plddts / atom_chain_ids must be in the same order as ATOM/HETATM records
-    in the PDB (as produced by AF3 confidences.json).
+    atom_plddts / atom_chain_ids must be in the same order as atoms in the
+    AF3 predicted structure file (`model.cif`).
     """
-    pdb_path = Path(pdb_path)
-    atoms = _parse_pdb_atoms_with_coords(pdb_path)
+    structure_path = Path(structure_path)
+    atoms = _parse_structure_atoms_with_coords(structure_path)
 
     if len(atoms) != len(atom_plddts):
         print(
             f"[Warning] pDOCKQ: atom count mismatch "
-            f"(PDB={len(atoms)}, pLDDT array={len(atom_plddts)}). Skipping."
+            f"(structure={len(atoms)}, pLDDT array={len(atom_plddts)}). Skipping."
         )
         return {}
 

@@ -92,6 +92,18 @@ python af3score_pipeline.py \
   --weights /absolute/path/to/alphafold3_model_parameters/weights.bin
 ```
 
+To generate only the final CSV from an existing partially completed run:
+
+```bash
+python af3score_pipeline.py \
+  --input ./pdb \
+  --output_dir ./run_001 \
+  --csv true
+```
+
+This skips preprocessing and inference and reads the current confidence outputs
+from `./run_001/af3score_outputs` unless you override `--af3_output_dir`.
+
 ### Full path control (no hardcoded internal paths)
 
 All generated output locations and called script paths are configurable from CLI:

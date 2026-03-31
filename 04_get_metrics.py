@@ -217,6 +217,7 @@ def process_single_description(args):
         base_path = Path(base_dir) / description / "seed-10_sample-0"
         summary_path = base_path / "summary_confidences.json"
         conf_path = base_path / "confidences.json"
+        model_cif_path = base_path / "model.cif"
         pdb_path = Path(input_pdb_dir) / f"{description}.pdb"
 
         # Validate existence of required files
@@ -226,6 +227,8 @@ def process_single_description(args):
             return None, f"{description}: missing pdb file"
         if not conf_path.exists():
             return None, f"{description}: missing conf file"
+        if not model_cif_path.exists():
+            return None, f"{description}: missing model.cif file"
 
         # Calculate ipSAE (interface Predicted Structural Alignment Error)
         ipsae_metrics = {}
@@ -238,12 +241,13 @@ def process_single_description(args):
         for k, v in ipsae_dict.items():
             ipsae_metrics[f"ipsae_{k}"] = v
 
-        # Calculate pDOCKQ (requires atom_plddts from confidences.json)
+        # Calculate pDOCKQ against the AF3 predicted structure that produced
+        # confidences.json, not the original input PDB.
         # Load conf early so we can reuse it below without re-reading.
         conf = json.loads(conf_path.read_text())
         pdockq_metrics = {}
         pdockq_dict = calculate_pdockq(
-            pdb_path,
+            model_cif_path,
             conf["atom_plddts"],
             conf["atom_chain_ids"],
         )
@@ -294,6 +298,7 @@ def process_single_description(args):
 
         result = {
             "description": description,
+            "input_pdb_path": str(pdb_path.resolve()),
             "ptm": summary.get("ptm", 0.0),
             "iptm": summary.get("iptm", 0.0),
         }
