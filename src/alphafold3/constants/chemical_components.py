@@ -14,15 +14,24 @@ from collections.abc import ItemsView, Iterator, KeysView, Mapping, Sequence, Va
 import dataclasses
 import functools
 import os
-import pickle
 
 from alphafold3.common import resources
+from alphafold3.common import safe_pickle
 from alphafold3.cpp import cif_dict
 
 
 _CCD_PICKLE_FILE = resources.filename(
     resources.ROOT / 'constants/converters/ccd.pickle'
 )
+
+
+@functools.cache
+def _load_ccd_pickle_cached(
+    path: os.PathLike[str],
+) -> dict[str, Mapping[str, Sequence[str]]]:
+  """Loads the CCD pickle file and caches it so that it is only loaded once."""
+  with open(path, 'rb') as f:
+    return safe_pickle.load(f)
 
 
 class Ccd(Mapping[str, Mapping[str, Sequence[str]]]):
@@ -52,14 +61,13 @@ class Ccd(Mapping[str, Mapping[str, Sequence[str]]]):
         be used to override specific entries in the CCD if desired.
     """
     self._ccd_pickle_path = ccd_pickle_path or _CCD_PICKLE_FILE
-    with open(self._ccd_pickle_path, 'rb') as f:
-      self._dict = pickle.loads(f.read())
+    self._dict = _load_ccd_pickle_cached(self._ccd_pickle_path)
 
     if user_ccd is not None:
       if not user_ccd:
         raise ValueError('User CCD cannot be an empty string.')
       user_ccd_cifs = {
-          key: {k: tuple(v) for k, v in value.items()}
+          key: value.to_dict()
           for key, value in cif_dict.parse_multi_data_cif(user_ccd).items()
       }
       self._dict.update(user_ccd_cifs)
@@ -92,11 +100,6 @@ class Ccd(Mapping[str, Mapping[str, Sequence[str]]]):
 
   def keys(self) -> KeysView[str]:
     return self._dict.keys()
-
-
-@functools.cache
-def cached_ccd(user_ccd: str | None = None) -> Ccd:
-  return Ccd(user_ccd=user_ccd)
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -135,15 +138,23 @@ def mmcif_to_info(mmcif: Mapping[str, Sequence[str]]) -> ComponentInfo:
     # A non-standard component, e.g. MSE.
     mon_nstd_flag = 'n'
 
-  pdbx_smiles = ''
-  descriptor_types = mmcif['_pdbx_chem_comp_descriptor.type']
-  descriptors = mmcif['_pdbx_chem_comp_descriptor.descriptor']
-  for descriptor_type, descriptor in zip(descriptor_types, descriptors):
+  # Default SMILES is the canonical SMILES, but we fall back to the SMILES if a
+  # canonical SMILES is not available. Of canonical SMILES, we prefer ones from
+  # the OpenEye OEToolkits program.
+  canonical_pdbx_smiles = ''
+  fallback_pdbx_smiles = ''
+  descriptor_types = mmcif.get('_pdbx_chem_comp_descriptor.type', [])
+  descriptors = mmcif.get('_pdbx_chem_comp_descriptor.descriptor', [])
+  programs = mmcif.get('_pdbx_chem_comp_descriptor.program', [])
+  for descriptor_type, descriptor, program in zip(
+      descriptor_types, descriptors, programs
+  ):
     if descriptor_type == 'SMILES_CANONICAL':
-      pdbx_smiles = descriptor
-      break
-    elif not pdbx_smiles and descriptor_type == 'SMILES':
-      pdbx_smiles = descriptor
+      if (not canonical_pdbx_smiles) or program == 'OpenEye OEToolkits':
+        canonical_pdbx_smiles = descriptor
+    if not fallback_pdbx_smiles and descriptor_type == 'SMILES':
+      fallback_pdbx_smiles = descriptor
+  pdbx_smiles = canonical_pdbx_smiles or fallback_pdbx_smiles
 
   return ComponentInfo(
       name=front_or_empty(names),

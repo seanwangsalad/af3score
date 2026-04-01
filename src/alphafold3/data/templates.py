@@ -517,6 +517,9 @@ class Templates:
     """
 
     def hit_generator(a3m: str):
+      if not a3m:
+        return  # Hmmsearch could return an empty string if there are no hits.
+
       for hit_seq, hit_desc in parsers.lazy_parse_fasta_string(a3m):
         pdb_id, auth_chain_id, start, end, full_length = _parse_hit_description(
             hit_desc
@@ -776,7 +779,9 @@ def _parse_hit_metadata(
   try:
     cif = mmcif.from_string(structure_store.get_mmcif_str(pdb_id))
   except structure_stores.NotFoundError:
-    logging.warning('Failed to get mmCIF for %s.', pdb_id)
+    logging.warning(
+        'Failed to get mmCIF for %s (author chain %s).', pdb_id, auth_chain_id
+    )
     return None, None, None
   release_date = mmcif.get_release_date(cif)
 
@@ -834,18 +839,20 @@ def get_polymer_features(
   Raises:
     ValueError: If the input structure contains more than just a single chain.
   """
-  if len(chain.polymer_auth_asym_id_to_label_asym_id()) != 1:
-    raise ValueError('The structure must be filtered to a single chain.')
-
   if chain.name is None:
-    raise ValueError('The structure must have a name.')
+    raise ValueError('Template structure must have a name.')
 
   if chain.release_date is None:
-    from datetime import datetime
-    release_date = datetime(2024, 1, 1)
-    print("Warning: No release date found. Using default release date: 2024-01-01")
-  else:
-    release_date = chain.release_date
+    # Input structures used as templates for scoring don't have release dates.
+    # Use a far-future date so downstream date filtering never excludes them.
+    chain = chain.copy_and_update_globals(release_date=datetime.date(2100, 1, 1))
+
+  num_polymer_chains = len(chain.polymer_auth_asym_id_to_label_asym_id())
+  if num_polymer_chains != 1:
+    raise ValueError(
+        f'Template structure {chain.name} must be filtered to a single polymer'
+        f' chain but got a structure with {num_polymer_chains} polymer chains.'
+    )
 
   auth_chain_id, label_chain_id = next(
       iter(chain.polymer_auth_asym_id_to_label_asym_id().items())
@@ -853,9 +860,11 @@ def get_polymer_features(
   chain_sequence = chain.chain_single_letter_sequence()[label_chain_id]
 
   polymer = _POLYMERS[chain_poly_type]
-  positions, positions_mask = chain.to_res_arrays(
+  res_arrays = chain.to_res_arrays(
       include_missing_residues=True, atom_order=polymer.atom_order
   )
+  positions = res_arrays.atom_positions
+  positions_mask = res_arrays.atom_mask
   template_all_atom_positions = np.zeros(
       (query_sequence_length, polymer.num_atom_types, 3), dtype=np.float64
   )
@@ -872,13 +881,14 @@ def get_polymer_features(
   template_sequence = ''.join(template_sequence)
   template_aatype = _encode_restype(chain_poly_type, template_sequence)
   template_name = f'{chain.name.lower()}_{auth_chain_id}'
+  release_date = chain.release_date.strftime('%Y-%m-%d')
   return {
       'template_all_atom_positions': template_all_atom_positions,
       'template_all_atom_masks': template_all_atom_masks,
       'template_sequence': template_sequence.encode(),
       'template_aatype': np.array(template_aatype, dtype=np.int32),
       'template_domain_names': np.array(template_name.encode(), dtype=object),
-      'template_release_date': np.array(release_date.strftime('%Y-%m-%d').encode(), dtype=object),
+      'template_release_date': np.array(release_date.encode(), dtype=object),
   }
 
 
@@ -896,12 +906,12 @@ def _get_ligand_features(
     idxs = np.where(ligand_struc.chain_id == ligand_chain_id)[0]
     if idxs.shape[0]:
       ligand_features[ligand_chain_id] = {
-          'ligand_atom_positions': ligand_struc.coords[idxs, :].astype(
-              np.float32
+          'ligand_atom_positions': (
+              ligand_struc.coords[idxs, :].astype(np.float32)
           ),
           'ligand_atom_names': ligand_struc.atom_name[idxs].astype(object),
-          'ligand_atom_occupancies': ligand_struc.atom_occupancy[idxs].astype(
-              np.float32
+          'ligand_atom_occupancies': (
+              ligand_struc.atom_occupancy[idxs].astype(np.float32)
           ),
           'ccd_id': ligand_struc.res_name[idxs][0].encode(),
       }

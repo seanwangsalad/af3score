@@ -95,6 +95,11 @@ class WholePdbPipeline:
       msa_crop_size: Maximum size of MSA to take across all chains.
       max_template_date: Optional max template date to prevent data leakage in
         validation.
+      ref_max_modified_date: Optional maximum date that controls whether to
+        allow use of model coordinates for a chemical component from the CCD if
+        RDKit conformer generation fails and the component does not have ideal
+        coordinates set. Only for components that have been released before this
+        date the model coordinates can be used as a fallback.
       max_templates: The maximum number of templates to send through the network
         set to 0 to switch off templates.
       filter_clashes: If true then will remove clashing chains.
@@ -102,7 +107,6 @@ class WholePdbPipeline:
       max_paired_sequence_per_species: The maximum number of sequences per
         species that will be used for MSA pairing.
       drop_ligand_leaving_atoms: Flag for handling leaving atoms for ligands.
-      intra_ligand_ptm_bonds: Whether to embed intra ligand covalent bond graph.
       average_num_atoms_per_token: Target average number of atoms per token to
         compute the padding size for flat atoms.
       atom_cross_att_queries_subset_size: queries subset size in atom cross
@@ -114,6 +118,12 @@ class WholePdbPipeline:
         symmetric polymer chains.
       deterministic_frames: Whether to use fixed-seed reference positions to
         construct deterministic frames.
+      resolve_msa_overlaps: Whether to deduplicate unpaired MSA against paired
+        MSA. The default behaviour matches the method described in the AlphaFold
+        3 paper. Set this to false if providing custom paired MSA using the
+        unpaired MSA field to keep it exactly as is as deduplication against
+        the paired MSA could break the manually crafted pairing between MSA
+        sequences.
     """
 
     max_atoms_per_token: int = 24
@@ -123,25 +133,23 @@ class WholePdbPipeline:
     min_total_residues: int | None = None
     msa_crop_size: int = 16384
     max_template_date: datetime.date | None = None
+    ref_max_modified_date: datetime.date | None = None
     max_templates: int = 4
     filter_clashes: bool = False
     filter_crystal_aids: bool = False
     max_paired_sequence_per_species: int = 600
     drop_ligand_leaving_atoms: bool = True
-    intra_ligand_ptm_bonds: bool = True
     average_num_atoms_per_token: int = 24
     atom_cross_att_queries_subset_size: int = 32
     atom_cross_att_keys_subset_size: int = 128
     flatten_non_standard_residues: bool = True
     remove_nonsymmetric_bonds: bool = False
     deterministic_frames: bool = True
+    conformer_max_iterations: int | None = None
+    resolve_msa_overlaps: bool = True
 
-  def __init__(
-      self,
-      *,
-      config: Config,
-  ):
-    """Init WholePdb.
+  def __init__(self, *, config: Config):
+    """Initializes WholePdb data pipeline.
 
     Args:
       config: Pipeline configuration.
@@ -337,6 +345,7 @@ class WholePdbPipeline:
         fold_input=fold_input,
         logging_name=logging_name,
         max_paired_sequence_per_species=self._config.max_paired_sequence_per_species,
+        resolve_msa_overlaps=self._config.resolve_msa_overlaps,
     )
 
     # Create template features
@@ -349,7 +358,8 @@ class WholePdbPipeline:
         logging_name=logging_name,
     )
 
-    ref_max_modified_date = self._config.max_template_date
+    ref_max_modified_date = self._config.ref_max_modified_date
+    conformer_max_iterations = self._config.conformer_max_iterations
     batch_ref_structure, ligand_ligand_bonds = (
         features.RefStructure.compute_features(
             all_token_atoms_layout=all_token_atoms_layout,
@@ -358,7 +368,7 @@ class WholePdbPipeline:
             chemical_components_data=chemical_components_data,
             random_state=random_state,
             ref_max_modified_date=ref_max_modified_date,
-            intra_ligand_ptm_bonds=self._config.intra_ligand_ptm_bonds,
+            conformer_max_iterations=conformer_max_iterations,
             ligand_ligand_bonds=ligand_ligand_bonds,
         )
     )
@@ -373,7 +383,7 @@ class WholePdbPipeline:
               np.random.RandomState(_DETERMINISTIC_FRAMES_RANDOM_SEED)
           ),
           ref_max_modified_date=ref_max_modified_date,
-          intra_ligand_ptm_bonds=self._config.intra_ligand_ptm_bonds,
+          conformer_max_iterations=None,
           ligand_ligand_bonds=ligand_ligand_bonds,
       )
 
@@ -437,9 +447,8 @@ class WholePdbPipeline:
           and np.isnan(np.sum(value))
       ):
         raise NanDataError(
-            'The output of the data pipeline contained nans. '
-            f'nan feature: {name}, fold input name: {fold_input.name}, '
-            f'random_seed {random_seed}'
+            f'Data pipeline output for {logging_name=} contains NaNs. NaN'
+            f' feature: {name}'
         )
 
     return np_example

@@ -16,7 +16,7 @@ import json
 from typing import Any, Self
 
 from absl import logging
-from alphafold3.model.components import base_model
+from alphafold3.model import model
 import jax
 import numpy as np
 
@@ -28,10 +28,15 @@ class StructureConfidenceFullEncoder(json.JSONEncoder):
     super().__init__(**(kwargs | dict(separators=(',', ':'))))
 
   def encode(self, o: 'StructureConfidenceFull'):
-    # Cast to np.float64 to preserve original precision
-    atom_plddts = np.clip(np.asarray(o.atom_plddts, dtype=np.float64), 0.0, 99.99).astype(float)
-    contact_probs = np.clip(np.asarray(o.contact_probs, dtype=np.float64), 0.0, 1.0).astype(float)
-    pae = np.clip(np.asarray(o.pae, dtype=np.float64), 0.0, 99.9).astype(float)
+    atom_plddts = np.clip(
+        np.asarray(o.atom_plddts, dtype=np.float64), 0.0, 99.99
+    ).astype(float)
+    contact_probs = np.clip(
+        np.asarray(o.contact_probs, dtype=np.float64), 0.0, 1.0
+    ).astype(float)
+    pae = np.clip(
+        np.asarray(o.pae, dtype=np.float64), 0.0, 99.9
+    ).astype(float)
     return """\
 {
   "atom_chain_ids": %s,
@@ -129,7 +134,7 @@ class AtomConfidence:
 
   @classmethod
   def from_inference_result(
-      cls, inference_result: base_model.InferenceResult
+      cls, inference_result: model.InferenceResult
   ) -> Self:
     """Instantiates an AtomConfidence from a structure.
 
@@ -150,7 +155,7 @@ class AtomConfidence:
       this_confidence = float(struc.atom_b_factor[atom_number])
       as_dict['chain_id'].append(atom['chain_id'])
       as_dict['atom_number'].append(atom_number)
-      as_dict['confidence'].append(float(this_confidence))
+      as_dict['confidence'].append(round(this_confidence, 2))
       as_dict['confidence_category'].append(
           ConfidenceCategory.from_confidence_score(this_confidence)
       )
@@ -203,7 +208,7 @@ class StructureConfidenceSummary:
 
   @classmethod
   def from_inference_result(
-      cls, inference_result: base_model.InferenceResult
+      cls, inference_result: model.InferenceResult
   ) -> Self:
     """Returns a new instance based on a given inference result."""
     return cls(
@@ -228,11 +233,9 @@ class StructureConfidenceSummary:
   def to_json(self) -> str:
     def convert(data):
       if isinstance(data, np.ndarray):
-        # Cast to np.float64 to preserve original precision
-        original_data = data.astype(np.float64).tolist()
+        return data.astype(np.float64).tolist()
       else:
-        original_data = data
-      return original_data
+        return float(data)
 
     return _dump_json(jax.tree.map(convert, dataclasses.asdict(self)), indent=1)
 
@@ -250,7 +253,7 @@ class StructureConfidenceFull:
 
   @classmethod
   def from_inference_result(
-      cls, inference_result: base_model.InferenceResult
+      cls, inference_result: model.InferenceResult
   ) -> Self:
     """Returns a new instance based on a given inference result."""
 

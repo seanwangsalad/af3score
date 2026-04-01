@@ -25,10 +25,52 @@ from alphafold3.data import structure_stores
 from alphafold3.data import templates as templates_lib
 
 
+# Cache to avoid re-running template search for the same sequence in homomers.
+@functools.cache
+def _get_protein_templates(
+    sequence: str,
+    input_msa_a3m: str,
+    run_template_search: bool,
+    templates_config: msa_config.TemplatesConfig,
+    pdb_database_path: str,
+) -> templates_lib.Templates:
+  """Searches for templates for a single protein chain."""
+  if run_template_search:
+    templates_start_time = time.time()
+    logging.info('Getting protein templates for sequence %s', sequence)
+    protein_templates = templates_lib.Templates.from_seq_and_a3m(
+        query_sequence=sequence,
+        msa_a3m=input_msa_a3m,
+        max_template_date=templates_config.filter_config.max_template_date,
+        database_path=templates_config.template_tool_config.database_path,
+        hmmsearch_config=templates_config.template_tool_config.hmmsearch_config,
+        max_a3m_query_sequences=None,
+        chain_poly_type=mmcif_names.PROTEIN_CHAIN,
+        structure_store=structure_stores.StructureStore(pdb_database_path),
+        filter_config=templates_config.filter_config,
+    )
+    logging.info(
+        'Getting %d protein templates took %.2f seconds for sequence %s',
+        protein_templates.num_hits,
+        time.time() - templates_start_time,
+        sequence,
+    )
+  else:
+    logging.info('Skipping template search for sequence %s', sequence)
+    protein_templates = templates_lib.Templates(
+        query_sequence=sequence,
+        hits=[],
+        max_template_date=templates_config.filter_config.max_template_date,
+        structure_store=structure_stores.StructureStore(pdb_database_path),
+    )
+  return protein_templates
+
+
 # Cache to avoid re-running the MSA tools for the same sequence in homomers.
 @functools.cache
 def _get_protein_msa_and_templates(
     sequence: str,
+    run_template_search: bool,
     uniref90_msa_config: msa_config.RunConfig,
     mgnify_msa_config: msa_config.RunConfig,
     small_bfd_msa_config: msa_config.RunConfig,
@@ -76,11 +118,8 @@ def _get_protein_msa_and_templates(
       sequence,
   )
 
-  logging.info(
-      'Deduplicating MSAs and getting protein templates for sequence %s',
-      sequence,
-  )
-  templates_start_time = time.time()
+  logging.info('Deduplicating MSAs for sequence %s', sequence)
+  msa_dedupe_start_time = time.time()
   with futures.ThreadPoolExecutor() as executor:
     unpaired_protein_msa_future = executor.submit(
         msa.Msa.from_multiple_msas,
@@ -90,27 +129,25 @@ def _get_protein_msa_and_templates(
     paired_protein_msa_future = executor.submit(
         msa.Msa.from_multiple_msas, msas=[uniprot_msa], deduplicate=False
     )
-    templates_future = executor.submit(
-        templates_lib.Templates.from_seq_and_a3m,
-        query_sequence=sequence,
-        msa_a3m=uniref90_msa.to_a3m(),
-        max_template_date=templates_config.filter_config.max_template_date,
-        database_path=templates_config.template_tool_config.database_path,
-        hmmsearch_config=templates_config.template_tool_config.hmmsearch_config,
-        max_a3m_query_sequences=None,
-        chain_poly_type=mmcif_names.PROTEIN_CHAIN,
-        structure_store=structure_stores.StructureStore(pdb_database_path),
-        filter_config=templates_config.filter_config,
-    )
   unpaired_protein_msa = unpaired_protein_msa_future.result()
   paired_protein_msa = paired_protein_msa_future.result()
-  protein_templates = templates_future.result()
   logging.info(
-      'Deduplicating MSAs and getting protein templates took %.2f seconds for'
-      ' sequence %s',
-      time.time() - templates_start_time,
+      'Deduplicating MSAs took %.2f seconds for sequence %s, found %d unpaired'
+      ' sequences, %d paired sequences',
+      time.time() - msa_dedupe_start_time,
       sequence,
+      unpaired_protein_msa.depth,
+      paired_protein_msa.depth,
   )
+
+  protein_templates = _get_protein_templates(
+      sequence=sequence,
+      input_msa_a3m=unpaired_protein_msa.to_a3m(),
+      run_template_search=run_template_search,
+      templates_config=templates_config,
+      pdb_database_path=pdb_database_path,
+  )
+
   return unpaired_protein_msa, paired_protein_msa, protein_templates
 
 
@@ -149,16 +186,18 @@ def _get_rna_msa(
   nt_rna_msa = nt_rna_msa_future.result()
   rfam_msa = rfam_msa_future.result()
   rnacentral_msa = rnacentral_msa_future.result()
-  logging.info(
-      'Getting RNA MSAs took %.2f seconds for sequence %s',
-      time.time() - rna_msa_start_time,
-      sequence,
-  )
-
-  return msa.Msa.from_multiple_msas(
+  rna_msa = msa.Msa.from_multiple_msas(
       msas=[rfam_msa, rnacentral_msa, nt_rna_msa],
       deduplicate=True,
   )
+  logging.info(
+      'Getting RNA MSAs took %.2f seconds for sequence %s, found %d unpaired'
+      ' sequences',
+      time.time() - rna_msa_start_time,
+      sequence,
+      rna_msa.depth,
+  )
+  return rna_msa
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -175,21 +214,43 @@ class DataPipelineConfig:
       raw MSA in template search.
     small_bfd_database_path: Small BFD database path, used for protein MSA
       search.
+    small_bfd_z_value: The Z-value representing the database size in number of
+      sequences for E-value calculation. Must be set for sharded databases.
     mgnify_database_path: Mgnify database path, used for protein MSA search.
+    mgnify_z_value: The Z-value representing the database size in number of
+      sequences for E-value calculation. Must be set for sharded databases.
     uniprot_cluster_annot_database_path: Uniprot database path, used for protein
       paired MSA search.
+    uniprot_cluster_annot_z_value: The Z-value representing the database size in
+      number of sequences for E-value calculation. Must be set for sharded
+      databases.
     uniref90_database_path: UniRef90 database path, used for MSA search, and the
       MSA obtained by searching it is used to construct the profile for template
       search.
+    uniref90_z_value: The Z-value representing the database size in number of
+      sequences for E-value calculation. Must be set for sharded databases.
     ntrna_database_path: NT-RNA database path, used for RNA MSA search.
+    ntrna_z_value: The Z-value representing the database size in megabases for
+      E-value calculation. Must be set for sharded databases.
     rfam_database_path: Rfam database path, used for RNA MSA search.
+    rfam_z_value: The Z-value representing the database size in megabases for
+      E-value calculation. Must be set for sharded databases.
     rna_central_database_path: RNAcentral database path, used for RNA MSA
       search.
+    rna_central_z_value: The Z-value representing the database size in megabases
+      for E-value calculation. Must be set for sharded databases.
     seqres_database_path: PDB sequence database path, used for template search.
     pdb_database_path: PDB database directory with mmCIF files path, used for
       template search.
     jackhmmer_n_cpu: Number of CPUs to use for Jackhmmer.
+    jackhmmer_max_parallel_shards: Maximum number of shards to search against in
+      parallel. If None, one Jackhmmer instance will be run per shard. Only
+      applicable if the database is sharded.
     nhmmer_n_cpu: Number of CPUs to use for Nhmmer.
+    nhmmer_max_parallel_shards: Maximum number of shards to search against in
+      parallel. If None, one Nhmmer instance will be run per shard. Only
+      applicable if the database is sharded.
+    max_template_date: The latest date of templates to use.
   """
 
   # Binary paths.
@@ -201,22 +262,31 @@ class DataPipelineConfig:
 
   # Jackhmmer databases.
   small_bfd_database_path: str
+  small_bfd_z_value: int | None = None
   mgnify_database_path: str
+  mgnify_z_value: int | None = None
   uniprot_cluster_annot_database_path: str
+  uniprot_cluster_annot_z_value: int | None = None
   uniref90_database_path: str
+  uniref90_z_value: int | None = None
   # Nhmmer databases.
   ntrna_database_path: str
+  ntrna_z_value: int | None = None
   rfam_database_path: str
+  rfam_z_value: int | None = None
   rna_central_database_path: str
+  rna_central_z_value: int | None = None
   # Template search databases.
   seqres_database_path: str
   pdb_database_path: str
 
   # Optional configuration for MSA tools.
   jackhmmer_n_cpu: int = 8
+  jackhmmer_max_parallel_shards: int | None = None
   nhmmer_n_cpu: int = 8
+  nhmmer_max_parallel_shards: int | None = None
 
-
+  max_template_date: datetime.date
 
 
 class DataPipeline:
@@ -234,8 +304,10 @@ class DataPipeline:
             n_cpu=data_pipeline_config.jackhmmer_n_cpu,
             n_iter=1,
             e_value=1e-4,
-            z_value=None,
+            z_value=data_pipeline_config.uniref90_z_value,
+            dom_z_value=data_pipeline_config.uniref90_z_value,
             max_sequences=10_000,
+            max_parallel_shards=data_pipeline_config.jackhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.PROTEIN_CHAIN,
         crop_size=None,
@@ -250,8 +322,10 @@ class DataPipeline:
             n_cpu=data_pipeline_config.jackhmmer_n_cpu,
             n_iter=1,
             e_value=1e-4,
-            z_value=None,
+            z_value=data_pipeline_config.mgnify_z_value,
+            dom_z_value=data_pipeline_config.mgnify_z_value,
             max_sequences=5_000,
+            max_parallel_shards=data_pipeline_config.jackhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.PROTEIN_CHAIN,
         crop_size=None,
@@ -268,8 +342,10 @@ class DataPipeline:
             e_value=1e-4,
             # Set z_value=138_515_945 to match the z_value used in the paper.
             # In practice, this has minimal impact on predicted structures.
-            z_value=None,
+            z_value=data_pipeline_config.small_bfd_z_value,
+            dom_z_value=data_pipeline_config.small_bfd_z_value,
             max_sequences=5_000,
+            max_parallel_shards=data_pipeline_config.jackhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.PROTEIN_CHAIN,
         crop_size=None,
@@ -284,8 +360,10 @@ class DataPipeline:
             n_cpu=data_pipeline_config.jackhmmer_n_cpu,
             n_iter=1,
             e_value=1e-4,
-            z_value=None,
+            z_value=data_pipeline_config.uniprot_cluster_annot_z_value,
+            dom_z_value=data_pipeline_config.uniprot_cluster_annot_z_value,
             max_sequences=50_000,
+            max_parallel_shards=data_pipeline_config.jackhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.PROTEIN_CHAIN,
         crop_size=None,
@@ -302,7 +380,9 @@ class DataPipeline:
             n_cpu=data_pipeline_config.nhmmer_n_cpu,
             e_value=1e-3,
             alphabet='rna',
+            z_value=data_pipeline_config.ntrna_z_value,
             max_sequences=10_000,
+            max_parallel_shards=data_pipeline_config.nhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.RNA_CHAIN,
         crop_size=None,
@@ -319,7 +399,9 @@ class DataPipeline:
             n_cpu=data_pipeline_config.nhmmer_n_cpu,
             e_value=1e-3,
             alphabet='rna',
+            z_value=data_pipeline_config.rfam_z_value,
             max_sequences=10_000,
+            max_parallel_shards=data_pipeline_config.nhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.RNA_CHAIN,
         crop_size=None,
@@ -336,7 +418,9 @@ class DataPipeline:
             n_cpu=data_pipeline_config.nhmmer_n_cpu,
             e_value=1e-3,
             alphabet='rna',
+            z_value=data_pipeline_config.rna_central_z_value,
             max_sequences=10_000,
+            max_parallel_shards=data_pipeline_config.nhmmer_max_parallel_shards,
         ),
         chain_poly_type=mmcif_names.RNA_CHAIN,
         crop_size=None,
@@ -365,8 +449,7 @@ class DataPipeline:
             min_hit_length=10,
             deduplicate_sequences=True,
             max_hits=4,
-            # By default, use the date from AF3 paper.
-            max_template_date=datetime.date(2021, 9, 30),
+            max_template_date=data_pipeline_config.max_template_date,
         ),
     )
     self._pdb_database_path = data_pipeline_config.pdb_database_path
@@ -379,44 +462,11 @@ class DataPipeline:
     has_paired_msa = chain.paired_msa is not None
     has_templates = chain.templates is not None
 
-    print("💡 Entered process_protein_chain()")
-    print(f"unpaired_msa: {chain.unpaired_msa}")
-    print(f"paired_msa: {chain.paired_msa}")
-    print(f"templates: {chain.templates}")
-
-
-    if has_unpaired_msa or has_paired_msa or has_templates:
-      if not has_unpaired_msa or not has_paired_msa or not has_templates:
-        raise ValueError(
-            f'Protein chain {chain.id} has unpaired MSA, paired MSA, or'
-            ' templates set only partially. If you want to run the pipeline'
-            ' with custom MSA/templates, you need to set all of them. You can'
-            ' set MSA to empty string and templates to empty list to signify'
-            ' that they should not be used and searched for.'
-        )
-      logging.info(
-          'Skipping MSA and template search for protein chain %s because it '
-          'already has MSAs and templates.',
-          chain.id,
-      )
-      print(f'Skipping MSA and template search for protein chain %s because it already has MSAs and templates {chain.id}')
-      if not chain.unpaired_msa:
-        logging.info('Using empty unpaired MSA for protein chain %s', chain.id)
-      if not chain.paired_msa:
-        logging.info('Using empty paired MSA for protein chain %s', chain.id)
-      if not chain.templates:
-        logging.info('Using no templates for protein chain %s', chain.id)
-      empty_msa = msa.Msa.from_empty(
-          query_sequence=chain.sequence,
-          chain_poly_type=mmcif_names.PROTEIN_CHAIN,
-      ).to_a3m()
-      unpaired_msa = chain.unpaired_msa or empty_msa
-      paired_msa = chain.paired_msa or empty_msa
-      templates = chain.templates
-    else:
-      print('no template')
+    if not has_unpaired_msa and not has_paired_msa and not chain.templates:
+      # MSA None - search. Templates either [] - don't search, or None - search.
       unpaired_msa, paired_msa, template_hits = _get_protein_msa_and_templates(
           sequence=chain.sequence,
+          run_template_search=not has_templates,  # Skip template search if [].
           uniref90_msa_config=self._uniref90_msa_config,
           mgnify_msa_config=self._mgnify_msa_config,
           small_bfd_msa_config=self._small_bfd_msa_config,
@@ -433,9 +483,61 @@ class DataPipeline:
           )
           for hit, struc in template_hits.get_hits_with_structures()
       ]
+    elif has_unpaired_msa and has_paired_msa and not has_templates:
+      # Has MSA, but doesn't have templates. Search for templates only.
+      empty_msa = msa.Msa.from_empty(
+          query_sequence=chain.sequence,
+          chain_poly_type=mmcif_names.PROTEIN_CHAIN,
+      ).to_a3m()
+      unpaired_msa = chain.unpaired_msa or empty_msa
+      paired_msa = chain.paired_msa or empty_msa
+      template_hits = _get_protein_templates(
+          sequence=chain.sequence,
+          input_msa_a3m=unpaired_msa,
+          run_template_search=True,
+          templates_config=self._templates_config,
+          pdb_database_path=self._pdb_database_path,
+      )
+      templates = [
+          folding_input.Template(
+              mmcif=struc.to_mmcif(),
+              query_to_template_map=hit.query_to_hit_mapping,
+          )
+          for hit, struc in template_hits.get_hits_with_structures()
+      ]
+    else:
+      # Has MSA and templates, don't search for anything.
+      if not has_unpaired_msa or not has_paired_msa or not has_templates:
+        raise ValueError(
+            f'Protein chain {chain.id} has unpaired MSA, paired MSA, or'
+            ' templates set only partially. If you want to run the pipeline'
+            ' with custom MSA/templates, you need to set all of them. You can'
+            ' set MSA to empty string and templates to empty list to signify'
+            ' that they should not be used and searched for.'
+        )
+      logging.info(
+          'Skipping MSA and template search for protein chain %s because it '
+          'already has MSAs and templates.',
+          chain.id,
+      )
+      if not chain.unpaired_msa:
+        logging.info('Using empty unpaired MSA for protein chain %s', chain.id)
+      if not chain.paired_msa:
+        logging.info('Using empty paired MSA for protein chain %s', chain.id)
+      if not chain.templates:
+        logging.info('Using no templates for protein chain %s', chain.id)
+      empty_msa = msa.Msa.from_empty(
+          query_sequence=chain.sequence,
+          chain_poly_type=mmcif_names.PROTEIN_CHAIN,
+      ).to_a3m()
+      unpaired_msa = chain.unpaired_msa or empty_msa
+      paired_msa = chain.paired_msa or empty_msa
+      templates = chain.templates
 
-    return dataclasses.replace(
-        chain,
+    return folding_input.ProteinChain(
+        id=chain.id,
+        sequence=chain.sequence,
+        ptms=chain.ptms,
         unpaired_msa=unpaired_msa,
         paired_msa=paired_msa,
         templates=templates,
@@ -464,13 +566,18 @@ class DataPipeline:
           rfam_msa_config=self._rfam_msa_config,
           rnacentral_msa_config=self._rnacentral_msa_config,
       ).to_a3m()
-    return dataclasses.replace(chain, unpaired_msa=unpaired_msa)
+    return folding_input.RnaChain(
+        id=chain.id,
+        sequence=chain.sequence,
+        modifications=chain.modifications,
+        unpaired_msa=unpaired_msa,
+    )
 
   def process(self, fold_input: folding_input.Input) -> folding_input.Input:
     """Runs MSA and template tools and returns a new Input with the results."""
     processed_chains = []
     for chain in fold_input.chains:
-      print(f'Processing chain {chain.id}')
+      print(f'Running data pipeline for chain {chain.id}...')
       process_chain_start_time = time.time()
       match chain:
         case folding_input.ProteinChain():
@@ -480,7 +587,7 @@ class DataPipeline:
         case _:
           processed_chains.append(chain)
       print(
-          f'Processing chain {chain.id} took'
+          f'Running data pipeline for chain {chain.id} took'
           f' {time.time() - process_chain_start_time:.2f} seconds',
       )
 

@@ -39,7 +39,9 @@ def featurise_input(
     fold_input: folding_input.Input,
     ccd: chemical_components.Ccd,
     buckets: Sequence[int] | None,
-    max_template_date: datetime.date | None = None,
+    ref_max_modified_date: datetime.date | None = None,
+    conformer_max_iterations: int | None = None,
+    resolve_msa_overlaps: bool = True,
     verbose: bool = False,
 ) -> Sequence[features.BatchDict]:
   """Featurise the folding input.
@@ -52,20 +54,32 @@ def featurise_input(
       number of tokens. If not None, must be a sequence of at least one integer,
       in strictly increasing order. Will raise an error if the number of tokens
       is more than the largest bucket size.
-    max_template_date: Optional max template date to prevent data leakage in
-      validation.
+    ref_max_modified_date: Optional maximum date that controls whether to allow
+      use of model coordinates for a chemical component from the CCD if RDKit
+      conformer generation fails and the component does not have ideal
+      coordinates set. Only for components that have been released before this
+      date the model coordinates can be used as a fallback.
+    conformer_max_iterations: Optional override for maximum number of iterations
+      to run for RDKit conformer search.
+    resolve_msa_overlaps: Whether to deduplicate unpaired MSA against paired
+      MSA. The default behaviour matches the method described in the AlphaFold 3
+      paper. Set this to false if providing custom paired MSA using the unpaired
+      MSA field to keep it exactly as is as deduplication against the paired MSA
+      could break the manually crafted pairing between MSA sequences.
     verbose: Whether to print progress messages.
 
   Returns:
     A featurised batch for each rng_seed in the input.
   """
-  # import pdb; pdb.set_trace()
   validate_fold_input(fold_input)
 
   # Set up data pipeline for single use.
   data_pipeline = pipeline.WholePdbPipeline(
       config=pipeline.WholePdbPipeline.Config(
-          buckets=buckets, max_template_date=max_template_date
+          buckets=buckets,
+          ref_max_modified_date=ref_max_modified_date,
+          conformer_max_iterations=conformer_max_iterations,
+          resolve_msa_overlaps=resolve_msa_overlaps,
       ),
   )
 
@@ -73,7 +87,7 @@ def featurise_input(
   for rng_seed in fold_input.rng_seeds:
     featurisation_start_time = time.time()
     if verbose:
-      print(f'Featurising {fold_input.name} with rng_seed {rng_seed}.')
+      print(f'Featurising data with seed {rng_seed}.')
     batch = data_pipeline.process_item(
         fold_input=fold_input,
         ccd=ccd,
@@ -82,8 +96,8 @@ def featurise_input(
     )
     if verbose:
       print(
-          f'Featurising {fold_input.name} with rng_seed {rng_seed} '
-          f'took {time.time() - featurisation_start_time:.2f} seconds.'
+          f'Featurising data with seed {rng_seed} took'
+          f' {time.time() - featurisation_start_time:.2f} seconds.'
       )
     batches.append(batch)
 

@@ -10,7 +10,7 @@
 
 """Protein features that are computed from parsed mmCIF objects."""
 
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Mapping
 import datetime
 from typing import TypeAlias
 
@@ -21,13 +21,6 @@ import numpy as np
 
 
 FeatureDict: TypeAlias = Mapping[str, np.ndarray]
-MutableFeatureDict: TypeAlias = MutableMapping[str, np.ndarray]
-
-
-def fix_features(msa_features: MutableFeatureDict) -> MutableFeatureDict:
-  """Renames the deletion_matrix feature."""
-  msa_features['deletion_matrix'] = msa_features.pop('deletion_matrix_int')
-  return msa_features
 
 
 def get_profile_features(
@@ -46,19 +39,17 @@ def get_profile_features(
 
 
 def fix_template_features(
-    sequence: str,
-    template_features: FeatureDict,
+    template_features: FeatureDict, num_res: int
 ) -> FeatureDict:
   """Convert template features to AlphaFold 3 format.
 
   Args:
-    sequence: amino acid sequence of the protein.
     template_features: Template features for the protein.
+    num_res: The length of the amino acid sequence of the protein.
 
   Returns:
     Updated template_features for the chain.
   """
-  num_res = len(sequence)
   if not template_features['template_aatype'].shape[0]:
     template_features = empty_template_features(num_res)
   else:

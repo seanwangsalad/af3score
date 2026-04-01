@@ -6,7 +6,7 @@ Minimal Python pipeline for evaluating protein structure quality using AlphaFold
 
 ## Environment
 
-- Conda env: `af3score`, Python 3.11
+- Conda env: `af3score`, Python 3.12+
 - Key deps: JAX, Haiku, biopython, h5py, pandas, RDKit
 - Install: `pip install --no-deps -e .` then `build_data`
 
