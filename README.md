@@ -6,53 +6,53 @@ A Python-first pipeline for evaluating protein structure quality with AF3Score.
 
 - Linux x86_64
 - CUDA 12 compatible GPU
-- [Miniconda or Anaconda](https://docs.conda.io/en/latest/miniconda.html) installed
 
 ## Installation
 
-### 1. Create a conda environment with Python 3.11
+Choose either **conda** or **uv** below.
+
+---
+
+### Option A — conda
+
+#### 1. Create a conda environment with Python 3.11
 
 ```bash
 conda create -n af3score python=3.11
 ```
 
-### 2. Activate the environment
+#### 2. Activate the environment
 
 ```bash
 conda activate af3score
 ```
 
-### 3. Install the C++ compiler toolchain (required to build the C extensions)
+#### 3. Install the C++ compiler toolchain (required to build the C extensions)
 
 ```bash
 conda install gxx_linux-64 gxx_impl_linux-64 gcc_linux-64 gcc_impl_linux-64=13.2.0
 ```
 
-### 4. Clone this repository
+#### 4. Clone this repository
 
 ```bash
 git clone https://github.com/Mingchenchen/AF3Score.git
-```
-
-### 5. Enter the repository directory
-
-```bash
 cd AF3Score
 ```
 
-### 6. Install pinned Python dependencies (JAX, Haiku, Triton, etc.)
+#### 5. Install pinned Python dependencies (JAX, Haiku, Triton, etc.)
 
 ```bash
 pip install -r dev-requirements.txt
 ```
 
-### 7. Install AF3Score itself (editable, without re-resolving dependencies)
+#### 6. Install AF3Score itself (editable, without re-resolving dependencies)
 
 ```bash
 pip install --no-deps -e .
 ```
 
-### 8. Build the compiled data assets (chemical components database, etc.)
+#### 7. Build the compiled data assets (chemical components database, etc.)
 
 ```bash
 build_data
@@ -60,10 +60,66 @@ build_data
 
 > This step writes pre-processed data files used at inference time. It must complete before running the pipeline.
 
-### 9. Install additional Python dependencies for the scoring pipeline
+#### 8. Install additional Python dependencies for the scoring pipeline
 
 ```bash
 conda install -c conda-forge biopython h5py pandas tqdm
+```
+
+---
+
+### Option B — uv
+
+#### 1. Install uv (if not already installed)
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+#### 2. Install the system C++ compiler toolchain (required to build the C extensions)
+
+```bash
+sudo apt-get install -y gcc g++
+```
+
+#### 3. Clone this repository
+
+```bash
+git clone https://github.com/Mingchenchen/AF3Score.git
+cd AF3Score
+```
+
+#### 4. Create a virtual environment pinned to Python 3.11
+
+```bash
+uv venv --python 3.11 .venv
+source .venv/bin/activate
+```
+
+#### 5. Install pinned Python dependencies (JAX, Haiku, Triton, etc.)
+
+```bash
+uv pip install -r dev-requirements.txt
+```
+
+#### 6. Install AF3Score itself (editable, without re-resolving dependencies)
+
+```bash
+uv pip install --no-deps -e .
+```
+
+#### 7. Build the compiled data assets (chemical components database, etc.)
+
+```bash
+build_data
+```
+
+> This step writes pre-processed data files used at inference time. It must complete before running the pipeline.
+
+#### 8. Install additional Python dependencies for the scoring pipeline
+
+```bash
+uv pip install biopython h5py pandas tqdm
 ```
 
 ## Python CLI workflow (no bash wrappers)
