@@ -11,7 +11,7 @@ from tqdm import tqdm
 import glob
 
 # Ensure these utilities are available in your environment
-from ipsae_calculator import load_af3_pae_and_chains, calculate_ipsae
+from ipsae_calculator import load_af3_pae_and_chains, calculate_ipsae, calculate_pdockq
 
 
 def get_chains_from_pdb(pdb_path):
@@ -217,6 +217,7 @@ def process_single_description(args):
         base_path = Path(base_dir) / description / "seed-10_sample-0"
         summary_path = base_path / "summary_confidences.json"
         conf_path = base_path / "confidences.json"
+        model_cif_path = base_path / "model.cif"
         pdb_path = Path(input_pdb_dir) / f"{description}.pdb"
 
         # Validate existence of required files
@@ -226,6 +227,8 @@ def process_single_description(args):
             return None, f"{description}: missing pdb file"
         if not conf_path.exists():
             return None, f"{description}: missing conf file"
+        if not model_cif_path.exists():
+            return None, f"{description}: missing model.cif file"
 
         # Calculate ipSAE (interface Predicted Structural Alignment Error)
         ipsae_metrics = {}
@@ -241,6 +244,16 @@ def process_single_description(args):
         # Load AlphaFold3 confidence data
         summary = json.loads(summary_path.read_text())
         conf = json.loads(conf_path.read_text())
+
+        # Calculate pDOCKQ against the AF3 predicted structure
+        pdockq_metrics = {}
+        pdockq_dict = calculate_pdockq(
+            model_cif_path,
+            conf["atom_plddts"],
+            conf["atom_chain_ids"],
+        )
+        for k, v in pdockq_dict.items():
+            pdockq_metrics[f"pdockq_{k}"] = v
         chains = get_chains_from_pdb(pdb_path)
 
         # Map chain-level ipTM and PTM scores
@@ -283,6 +296,7 @@ def process_single_description(args):
 
         result = {
             "description": description,
+            "input_pdb_path": str(pdb_path.resolve()),
             "ptm": summary.get("ptm", 0.0),
             "iptm": summary.get("iptm", 0.0),
         }
@@ -294,6 +308,9 @@ def process_single_description(args):
             result[f"chain_{ch}_iptm"] = iptm.get(ch, np.nan)
 
         result.update(ipsae_metrics)
+        result["min_ipsae"] = min(ipsae_metrics.values()) if ipsae_metrics else np.nan
+        result.update(pdockq_metrics)
+        result["min_pdockq"] = min(pdockq_metrics.values()) if pdockq_metrics else np.nan
         result.update(interchain_iptm_dict)
 
         return result, None

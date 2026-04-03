@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).parent.resolve()
+
 
 def str2bool(value: str) -> bool:
     normalized = value.strip().lower()
@@ -29,12 +31,12 @@ def main() -> None:
     parser.add_argument("--run_data_pipeline", type=str2bool, default=False)
     parser.add_argument("--run_inference", type=str2bool, default=True)
 
-    # Script paths are configurable (no hardcoded absolute paths).
-    parser.add_argument("--extract_script", default="1_extract_chains.py")
-    parser.add_argument("--pdb2jax_script", default="2_pdb2jax.py")
-    parser.add_argument("--json_script", default="3_generate_json.py")
-    parser.add_argument("--af3score_script", default="run_af3score.py")
-    parser.add_argument("--metrics_script", default="04_get_metrics.py")
+    # Script paths are configurable; defaults resolve relative to this file.
+    parser.add_argument("--extract_script", default=str(_SCRIPT_DIR / "1_extract_chains.py"))
+    parser.add_argument("--pdb2jax_script", default=str(_SCRIPT_DIR / "2_pdb2jax.py"))
+    parser.add_argument("--json_script", default=str(_SCRIPT_DIR / "3_generate_json.py"))
+    parser.add_argument("--af3score_script", default=str(_SCRIPT_DIR / "run_af3score.py"))
+    parser.add_argument("--metrics_script", default=str(_SCRIPT_DIR / "04_get_metrics.py"))
 
     # Output locations are configurable.
     parser.add_argument("--cif_dir", default=None, help="Override chain CIF output directory.")

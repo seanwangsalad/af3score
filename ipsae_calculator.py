@@ -1,7 +1,9 @@
 import json
 import numpy as np
+from itertools import combinations
 from pathlib import Path
-from typing import Dict, Tuple, List, Optional, Union, Set
+from typing import Dict, List, Optional, Tuple, Union, Set
+from Bio.PDB import MMCIFParser, PDBParser
 
 # --- Constants Definition ---
 # Standard amino acid set (3-letter codes)
@@ -262,6 +264,148 @@ def calculate_ipsae(
             )
 
             scores[f"{chain1}_{chain2}"] = float(final_score)
+
+    return scores
+
+
+def _parse_structure_atoms_with_coords(
+    structure_path: Union[str, Path],
+) -> List[Dict]:
+    """Parse atoms from a PDB or mmCIF structure in file order."""
+    structure_path = Path(structure_path)
+    if structure_path.suffix.lower() == ".cif":
+        parser = MMCIFParser(QUIET=True)
+    else:
+        parser = PDBParser(QUIET=True)
+
+    structure = parser.get_structure("structure", str(structure_path))
+    model = structure[0]
+    atoms = []
+
+    for chain in model:
+        for residue in chain:
+            _, residue_seq_num, _ = residue.id
+            for atom in residue:
+                if atom.is_disordered():
+                    altloc = atom.get_altloc()
+                    if altloc not in (" ", "A"):
+                        continue
+                atoms.append(
+                    {
+                        "atom_name": atom.get_name().strip(),
+                        "residue_name": residue.get_resname().strip(),
+                        "chain_id": chain.id.strip(),
+                        "residue_seq_num": int(residue_seq_num),
+                        "x": float(atom.coord[0]),
+                        "y": float(atom.coord[1]),
+                        "z": float(atom.coord[2]),
+                    }
+                )
+    return atoms
+
+
+def calculate_pdockq(
+    structure_path: Union[str, Path],
+    atom_plddts: List[float],
+    atom_chain_ids: List[str],
+    dist_cutoff: float = 8.0,
+) -> Dict[str, float]:
+    """
+    Calculates pDOCKQ for each chain pair (Bryant et al. 2022).
+
+    x = avg_if_pLDDT * log10(n_contacts + 1)
+    pDOCKQ = 0.724 / (1 + exp(-0.052 * (x - 152.611))) + 0.018
+
+    Interface contacts use Cβ atoms (CA for Gly/ligands) within dist_cutoff Å.
+    Per-residue pLDDT is the mean over all atoms belonging to that residue.
+    atom_plddts / atom_chain_ids must be in the same order as atoms in the
+    AF3 predicted structure file (`model.cif`).
+    """
+    structure_path = Path(structure_path)
+    atoms = _parse_structure_atoms_with_coords(structure_path)
+
+    if len(atoms) != len(atom_plddts):
+        print(
+            f"[Warning] pDOCKQ: atom count mismatch "
+            f"(structure={len(atoms)}, pLDDT array={len(atom_plddts)}). Skipping."
+        )
+        return {}
+
+    # Build per-residue data: key = (chain_id, residue_seq_num)
+    residue_data: Dict[Tuple[str, int], Dict] = {}
+    for atom, plddt in zip(atoms, atom_plddts):
+        key = (atom["chain_id"], atom["residue_seq_num"])
+        if key not in residue_data:
+            residue_data[key] = {
+                "cb_plddt": None,
+                "ca_plddt": None,
+                "cb_coord": None,
+                "ca_coord": None,
+                "res_name": atom["residue_name"],
+            }
+        coord = np.array([atom["x"], atom["y"], atom["z"]])
+        if atom["atom_name"] == "CB":
+            residue_data[key]["cb_coord"] = coord
+            residue_data[key]["cb_plddt"] = plddt
+        elif atom["atom_name"] == "CA":
+            residue_data[key]["ca_coord"] = coord
+            residue_data[key]["ca_plddt"] = plddt
+
+    # Flatten to a list of residues with a single reference coordinate and pLDDT
+    residues = []
+    for (chain, _), data in residue_data.items():
+        ref = data["cb_coord"] if data["cb_coord"] is not None else data["ca_coord"]
+        if ref is None:
+            continue
+        plddt = data["cb_plddt"] if data["cb_plddt"] is not None else data["ca_plddt"]
+        if plddt is None:
+            continue
+        residues.append({
+            "chain": chain,
+            "plddt": float(plddt),
+            "coord": ref,
+        })
+
+    unique_chains = sorted(set(r["chain"] for r in residues))
+    scores: Dict[str, float] = {}
+
+    for c1, c2 in combinations(unique_chains, 2):
+        c1_res = [r for r in residues if r["chain"] == c1]
+        c2_res = [r for r in residues if r["chain"] == c2]
+
+        if not c1_res or not c2_res:
+            scores[f"{c1}_{c2}"] = 0.0
+            continue
+
+        c1_coords = np.array([r["coord"] for r in c1_res])
+        c2_coords = np.array([r["coord"] for r in c2_res])
+
+        dist_matrix = np.sqrt(
+            np.sum(
+                (c1_coords[:, None, :] - c2_coords[None, :, :]) ** 2,
+                axis=2,
+            )
+        )
+
+        contact_mask = dist_matrix < dist_cutoff
+        n_contacts = int(np.sum(contact_mask))
+
+        if n_contacts == 0:
+            scores[f"{c1}_{c2}"] = 0.0
+            continue
+
+        c1_interface = np.any(contact_mask, axis=1)
+        c2_interface = np.any(contact_mask, axis=0)
+
+        if_plddts = (
+            [r["plddt"] for r, m in zip(c1_res, c1_interface) if m]
+            + [r["plddt"] for r, m in zip(c2_res, c2_interface) if m]
+        )
+        avg_if_plddt = float(np.mean(if_plddts)) if if_plddts else 0.0
+
+        x = avg_if_plddt * np.log10(n_contacts)
+        pdockq = 0.724 / (1.0 + np.exp(-0.052 * (x - 152.611))) + 0.018
+        scores[f"{c1}_{c2}"] = float(pdockq)
 
     return scores
 

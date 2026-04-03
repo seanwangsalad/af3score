@@ -2,32 +2,83 @@
 
 A Python-first pipeline for evaluating protein structure quality with AF3Score.
 
-## Environment Setup
+## Prerequisites
 
-### 1. Create and activate a Conda environment
+- Linux x86_64
+- CUDA 12 compatible GPU
+- [Miniconda or Anaconda](https://docs.conda.io/en/latest/miniconda.html) installed
+
+## Installation
+
+### 1. Create a conda environment with Python 3.11
+
 ```bash
 conda create -n af3score python=3.11
+```
+
+### 2. Activate the environment
+
+```bash
 conda activate af3score
+```
+
+### 3. Install the C++ compiler toolchain (required to build the C extensions)
+
+```bash
 conda install gxx_linux-64 gxx_impl_linux-64 gcc_linux-64 gcc_impl_linux-64=13.2.0
 ```
 
-### 2. Install AF3Score and dependencies
+### 4. Clone this repository
+
 ```bash
 git clone https://github.com/Mingchenchen/AF3Score.git
+```
+
+### 5. Enter the repository directory
+
+```bash
 cd AF3Score
+```
+
+### 6. Install pinned Python dependencies (JAX, Haiku, Triton, etc.)
+
+```bash
 pip install -r dev-requirements.txt
+```
+
+### 7. Install AF3Score itself (editable, without re-resolving dependencies)
+
+```bash
 pip install --no-deps -e .
+```
+
+### 8. Build the compiled data assets (chemical components database, etc.)
+
+```bash
 build_data
-conda install -c conda-forge biopython h5py pandas
+```
+
+> This step writes pre-processed data files used at inference time. It must complete before running the pipeline.
+
+### 9. Install additional Python dependencies for the scoring pipeline
+
+```bash
+conda install -c conda-forge biopython h5py pandas tqdm
 ```
 
 ## Python CLI workflow (no bash wrappers)
+
+The pipeline scripts live inside the cloned repo directory. You can run them from any working directory by pointing Python at their absolute paths. Set a shell variable once to avoid repetition:
+
+```bash
+export AF3SCORE=/path/to/AF3Score   # e.g. /home/user/af3score_old
+```
 
 The pipeline is split into explicit Python steps with `argparse` CLIs.
 
 ### Step 1: extract chains + sequences
 ```bash
-python 1_extract_chains.py \
+python $AF3SCORE/1_extract_chains.py \
   --input_dir ./pdb \
   --output_dir_cif ./complex_chain_cifs \
   --save_csv ./complex_chain_sequences.csv
@@ -35,16 +86,14 @@ python 1_extract_chains.py \
 
 ### Step 2: convert PDB to JAX/H5 inputs
 ```bash
-python 2_pdb2jax.py \
+python $AF3SCORE/2_pdb2jax.py \
   --pdb_dir ./pdb \
   --output_dir ./complex_h5
 ```
-Input:
-- `./pdb/*.pdb`
 
 ### Step 3: generate AF3 JSON configs
 ```bash
-python 3_generate_json.py \
+python $AF3SCORE/3_generate_json.py \
   --sequence_csv ./complex_chain_sequences.csv \
   --cif_dir ./complex_chain_cifs \
   --output_dir ./complex_json_files
@@ -52,7 +101,7 @@ python 3_generate_json.py \
 
 ### Step 4: run AF3Score inference
 ```bash
-python run_af3score.py \
+python $AF3SCORE/run_af3score.py \
   --model_dir=/absolute/path/to/alphafold3_model_parameters \
   --batch_json_dir=./complex_json_files \
   --batch_h5_dir=./complex_h5 \
@@ -60,16 +109,22 @@ python run_af3score.py \
   --run_data_pipeline=False \
   --run_inference=true
 ```
-Input:
-- `./pdb/*.pdb`
+
+### Step 5: extract metrics (pLDDT, PAE, ipSAE, pDOCKQ, ipTM, pTM)
+```bash
+python $AF3SCORE/04_get_metrics.py \
+  --input_pdb_dir ./pdb \
+  --af3score_output_dir ./af3score_outputs \
+  --save_metric_csv ./af3score_metrics.csv \
+  --num_workers 16
+```
 
 ## One-command Python orchestration
 
 > Note: the pipeline wrapper flag is `--weights` and expects a single weight file path; it forwards that file's parent directory to `run_af3score.py --model_dir`.
 
-
 ```bash
-python af3score_pipeline.py \
+python $AF3SCORE/af3score_pipeline.py \
   --input ./pdb \
   --output_dir ./run_001 \
   --weights /absolute/path/to/alphafold3_model_parameters/weights.bin
@@ -80,7 +135,7 @@ python af3score_pipeline.py \
 All generated output locations and called script paths are configurable from CLI:
 
 ```bash
-python af3score_pipeline.py \
+python $AF3SCORE/af3score_pipeline.py \
   --input /data/my_pdbs \
   --output_dir /runs/exp_001 \
   --cif_dir /runs/exp_001/custom_cifs \
@@ -89,15 +144,13 @@ python af3score_pipeline.py \
   --json_dir /runs/exp_001/custom_json \
   --af3_output_dir /runs/exp_001/custom_af3 \
   --metric_csv /runs/exp_001/custom_metrics.csv \
-  --extract_script /opt/pipeline/1_extract_chains.py \
-  --pdb2jax_script /opt/pipeline/2_pdb2jax.py \
-  --json_script /opt/pipeline/3_generate_json.py \
-  --af3score_script /opt/pipeline/run_af3score.py \
-  --metrics_script /opt/pipeline/04_get_metrics.py \
+  --extract_script $AF3SCORE/1_extract_chains.py \
+  --pdb2jax_script $AF3SCORE/2_pdb2jax.py \
+  --json_script $AF3SCORE/3_generate_json.py \
+  --af3score_script $AF3SCORE/run_af3score.py \
+  --metrics_script $AF3SCORE/04_get_metrics.py \
   --weights /models/af3/weights.bin
 ```
-Input:
-- `./complex_chain_sequences.csv`
 
 ### Do I need `--db_dir`?
 
@@ -119,9 +172,10 @@ You can still disable MSA/database search entirely with:
 
 - **pTM**: global/per-chain topology confidence.
 - **ipTM**: interface confidence between chains.
-- **pLDDT**: per-residue confidence.
-- **PAE**: expected aligned error.
-- **ipSAE**: interface-focused score from aligned errors.
+- **pLDDT**: per-residue local confidence.
+- **PAE**: predicted aligned error between residue pairs.
+- **ipSAE**: interface-focused score derived from aligned errors (per chain pair, plus `min_ipsae`).
+- **pDOCKQ**: interface quality score based on Cβ contacts and interface pLDDT (Bryant et al. 2022; per chain pair, plus `min_pdockq`).
 
 ## Reference
 
