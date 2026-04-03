@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Large generated data files (produced by `build_data`, not tracked in git)
+*.pickle
+*.pkl
+*.bin
+*.h5
