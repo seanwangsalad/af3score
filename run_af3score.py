@@ -252,6 +252,12 @@ _NUM_SAMPLES = flags.DEFINE_integer(
     'Number of samples to generate for each prediction.',
 )
 
+_RESUME = flags.DEFINE_bool(
+    'resume',
+    False,
+    'Whether to resume an interrupted run by skipping fold inputs with complete outputs.',
+)
+
 # Output file control parameters
 _WRITE_CIF_MODEL = flags.DEFINE_bool(
     'write_cif_model',
@@ -366,12 +372,70 @@ class ResultsForSeed:
 
 # Define a global CCD variable at the module level
 global_ccd = None
+_COMPLETE_MARKER_NAME = '.af3score_complete'
 
 
 def preserve_case_safe_name(name: str) -> str:
   """Sanitize names for filesystem paths while preserving original letter case."""
   safe = ''.join(ch if ch.isalnum() or ch in {'-', '_', '.'} else '_' for ch in name)
   return safe.strip('._') or 'unnamed'
+
+
+def completion_marker_path(output_dir: os.PathLike[str] | str) -> str:
+  return os.path.join(output_dir, _COMPLETE_MARKER_NAME)
+
+
+def is_sample_output_complete(sample_dir: os.PathLike[str] | str) -> bool:
+  required_files = []
+  if _WRITE_CIF_MODEL.value:
+    required_files.append('model.cif')
+  if _WRITE_SUMMARY_CONFIDENCES.value:
+    required_files.append('summary_confidences.json')
+  if _WRITE_FULL_CONFIDENCES.value:
+    required_files.append('confidences.json')
+  if not required_files:
+    return os.path.isdir(sample_dir)
+  return os.path.isdir(sample_dir) and all(
+      os.path.isfile(os.path.join(sample_dir, filename)) for filename in required_files
+  )
+
+
+def count_complete_sample_outputs(output_dir: os.PathLike[str] | str) -> int:
+  if not os.path.isdir(output_dir):
+    return 0
+
+  complete_count = 0
+  for entry in os.listdir(output_dir):
+    sample_dir = os.path.join(output_dir, entry)
+    if not os.path.isdir(sample_dir):
+      continue
+    if not entry.startswith('seed-') or '_sample-' not in entry:
+      continue
+    if is_sample_output_complete(sample_dir):
+      complete_count += 1
+  return complete_count
+
+
+def has_complete_outputs(
+    fold_input: folding_input.Input,
+    output_dir: os.PathLike[str] | str,
+    num_samples: int,
+) -> bool:
+  expected_sample_count = len(fold_input.rng_seeds) * num_samples
+  if expected_sample_count <= 0:
+    return False
+
+  complete_sample_count = count_complete_sample_outputs(output_dir)
+  if complete_sample_count < expected_sample_count:
+    return False
+
+  marker_path = completion_marker_path(output_dir)
+  return os.path.isfile(marker_path) or complete_sample_count >= expected_sample_count
+
+
+def mark_outputs_complete(output_dir: os.PathLike[str] | str) -> None:
+  with open(completion_marker_path(output_dir), 'wt') as handle:
+    handle.write('complete\n')
 
 
 def predict_structure(
@@ -505,6 +569,8 @@ def write_outputs(
       writer.writerow(['seed', 'sample', 'ranking_score'])
       writer.writerows(ranking_scores)
 
+  mark_outputs_complete(output_dir)
+
 
 @overload
 def process_fold_input(
@@ -580,6 +646,18 @@ def process_fold_input(
   if not fold_input.chains:
     raise ValueError('Fold input has no chains.')
 
+  if (
+      _RESUME.value
+      and model_runner is not None
+      and has_complete_outputs(
+          fold_input=fold_input,
+          output_dir=output_dir,
+          num_samples=num_samples,
+      )
+  ):
+    print(f'Skipping {fold_input.name}: complete outputs already exist in {output_dir}')
+    return []
+
   if model_runner is not None:
     # If we're running inference, check we can load the model parameters before
     # (possibly) launching the data pipeline.
@@ -593,6 +671,8 @@ def process_fold_input(
     fold_input = pipeline.DataPipeline(data_pipeline_config).process(fold_input)
 
   print(f'Output directory: {output_dir}')
+  if model_runner is not None and os.path.exists(completion_marker_path(output_dir)):
+    os.remove(completion_marker_path(output_dir))
   if _WRITE_FOLD_INPUT_JSON_FILE.value:
     print(f'Writing model input JSON to {output_dir}')
     write_fold_input_json(fold_input, output_dir)
@@ -772,15 +852,37 @@ def main(_):
     # Load global CCD only once
     print("Loading chemical component dictionary (CCD) once for all inputs...")
     global_ccd = chemical_components.cached_ccd(user_ccd=None)
-    
-    # Batch processing: now each inference uses the same compiled model
-    print(f'Processing {len(batch_json_files)} files in batch mode')
+
+    total_batch_files = len(batch_json_files)
+    remaining_batch_files = total_batch_files
+    if _RESUME.value:
+      remaining_batch_files = 0
+      for json_file in batch_json_files:
+        base_name = os.path.splitext(os.path.basename(json_file))[0]
+        output_subdir = os.path.join(
+            _OUTPUT_DIR.value, preserve_case_safe_name(base_name)
+        )
+        complete_sample_count = count_complete_sample_outputs(output_subdir)
+        expected_sample_count = _NUM_SAMPLES.value
+        marker_path = completion_marker_path(output_subdir)
+        if not (
+            os.path.isfile(marker_path)
+            or complete_sample_count >= expected_sample_count
+        ):
+          remaining_batch_files += 1
+
+    print(
+        f'Packed structures: total={total_batch_files}, '
+        f'remaining={remaining_batch_files}'
+    )
+    print(f'Processing {total_batch_files} files in batch mode')
     batch_start_time = time.time()
     
     for i, json_file in enumerate(batch_json_files):
         file_start_time = time.time()
         json_path = os.path.join(_BATCH_JSON_DIR.value, json_file)
         base_name = os.path.splitext(os.path.basename(json_file))[0]
+        output_subdir = os.path.join(_OUTPUT_DIR.value, preserve_case_safe_name(base_name))
         
         # Look for matching H5 file
         h5_file = f"{base_name}.h5"
@@ -789,6 +891,17 @@ def main(_):
         if not os.path.exists(h5_path):
             print(f"Warning: No matching H5 file found for {json_file}. Skipping...")
             continue
+
+        if _RESUME.value:
+            complete_sample_count = count_complete_sample_outputs(output_subdir)
+            expected_sample_count = _NUM_SAMPLES.value
+            marker_path = completion_marker_path(output_subdir)
+            if os.path.isfile(marker_path) or complete_sample_count >= expected_sample_count:
+                print(
+                    f"Skipping {base_name}: found completed outputs in {output_subdir} "
+                    f"({complete_sample_count} complete sample(s))"
+                )
+                continue
         
         print(f"Processing {i+1}/{len(batch_json_files)}: {base_name}")
         
@@ -797,7 +910,6 @@ def main(_):
         
         # Process each fold input - now using compiled model
         for fold_input in fold_inputs:
-            output_subdir = os.path.join(_OUTPUT_DIR.value, preserve_case_safe_name(fold_input.name))
             process_fold_input(
                 fold_input=fold_input,
                 data_pipeline_config=data_pipeline_config,

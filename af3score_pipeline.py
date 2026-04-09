@@ -30,6 +30,7 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=4, help="Worker count for preprocessing scripts.")
     parser.add_argument("--run_data_pipeline", type=str2bool, default=False)
     parser.add_argument("--run_inference", type=str2bool, default=True)
+    parser.add_argument("--resume", type=str2bool, default=False, help="Skip completed AF3 outputs and resume interrupted runs.")
 
     # Script paths are configurable; defaults resolve relative to this file.
     parser.add_argument("--extract_script", default=str(_SCRIPT_DIR / "1_extract_chains.py"))
@@ -98,6 +99,7 @@ def main() -> None:
         f"--output_dir={af3_output_dir}",
         f"--run_data_pipeline={str(args.run_data_pipeline).lower()}",
         f"--run_inference={str(args.run_inference).lower()}",
+        f"--resume={str(args.resume).lower()}",
         *passthrough,
     ]
 

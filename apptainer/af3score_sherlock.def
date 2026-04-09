@@ -1,0 +1,107 @@
+Bootstrap: docker
+From: python:3.11-bookworm
+
+%labels
+    Author Sean Wang
+    Application AF3Score
+    Description AF3Score Apptainer image for Sherlock Slurm jobs
+
+%help
+    Build the image on a machine where you have Apptainer build access:
+
+      apptainer build af3score_sherlock.sif apptainer/af3score_sherlock.def
+
+    Run interactively on Sherlock with a GPU:
+
+      srun --partition=gpu --gpus=1 --cpus-per-task=8 --mem=64G --time=04:00:00 \
+        apptainer exec --nv \
+        --bind /scratch:/scratch \
+        --bind /oak:/oak \
+        --bind $PWD:/workspace \
+        af3score_sherlock.sif \
+        python /opt/af3score/af3score_pipeline.py \
+          --input /workspace/pdb \
+          --output_dir /workspace/run_001 \
+          --weights /scratch/$USER/alphafold3_model_parameters/weights.bin \
+          --run_data_pipeline=false \
+          --run_inference=true
+
+    Submit through Slurm:
+
+      sbatch apptainer/run_af3score_sherlock.sbatch \
+        /path/to/af3score_sherlock.sif \
+        /path/to/input_pdb_dir \
+        /path/to/output_dir \
+        /path/to/weights.bin
+
+    Notes:
+      - Use "apptainer exec --nv" so Sherlock passes through the NVIDIA driver stack.
+      - Bind model and database directories from Sherlock storage at runtime.
+      - If you need AlphaFold databases, add:
+          --db_dir /scratch/$USER/public_databases
+
+%environment
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
+    export PATH=/opt/venv/bin:$PATH
+    export PYTHONPATH=/opt/af3score:$PYTHONPATH
+    export AF3SCORE_HOME=/opt/af3score
+    export XLA_PYTHON_CLIENT_PREALLOCATE=false
+    export TF_FORCE_UNIFIED_MEMORY=1
+    export JAX_PLATFORM_NAME=gpu
+    export OMP_NUM_THREADS=1
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export PIP_NO_CACHE_DIR=1
+
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        g++ \
+        gcc \
+        git \
+        hmmer \
+        libffi-dev \
+        libgomp1 \
+        liblzma-dev \
+        libsqlite3-0 \
+        make \
+        ninja-build \
+        pkg-config \
+        wget \
+        zstd
+    rm -rf /var/lib/apt/lists/*
+
+    python -m venv /opt/venv
+    . /opt/venv/bin/activate
+
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+    cd /opt/af3score
+
+    pip install --no-cache-dir -r dev-requirements.txt
+    pip install --no-cache-dir --no-deps -e .
+    pip install --no-cache-dir biopython h5py pandas tqdm
+
+    build_data
+
+    rm -rf /root/.cache/pip
+    find /opt/venv -type d -name __pycache__ -prune -exec rm -rf {} +
+    find /opt/venv -type f -name '*.pyc' -delete
+
+%files
+    . /opt/af3score
+
+%runscript
+    export PATH=/opt/venv/bin:$PATH
+    export PYTHONPATH=/opt/af3score:$PYTHONPATH
+    if [ "$#" -eq 0 ]; then
+        exec /bin/bash
+    fi
+    exec "$@"
+
+%test
+    . /opt/venv/bin/activate
+    python --version
+    python -c "import jax; import alphafold3; print(jax.__version__)"
